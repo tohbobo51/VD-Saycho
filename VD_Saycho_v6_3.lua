@@ -790,7 +790,7 @@ print("✅ VD v6.3 GUI Loaded | Remote loading di background...")
 
 task.spawn(function()
     local ok, err = pcall(function()
-        local Remotes = ReplicatedStorage:WaitForChild("Remotes", 20)
+        local Remotes = ReplicatedStorage:WaitForChild("Remotes", 35)
         if not Remotes then warn("[VD] Folder Remotes tidak ditemukan!"); return end
 
         local function w(parent, name)
