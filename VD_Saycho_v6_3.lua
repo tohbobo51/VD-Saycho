@@ -22,11 +22,15 @@ local TweenService        = game:GetService("TweenService")
 local RunService          = game:GetService("RunService")
 local ReplicatedStorage   = game:GetService("ReplicatedStorage")
 local Workspace           = game:GetService("Workspace")
-local VirtualInputManager = game:GetService("VirtualInputManager")
+local VirtualInputManager = nil
+pcall(function()
+    VirtualInputManager = game:GetService("VirtualInputManager")
+end)
 
 local LocalPlayer = Players.LocalPlayer
 local Camera      = Workspace.CurrentCamera
-local PlayerGui   = LocalPlayer:WaitForChild("PlayerGui")
+local PlayerGui = LocalPlayer:FindFirstChild("PlayerGui") 
+    or LocalPlayer:WaitForChild("PlayerGui", 10)
 
 -- ============================================================
 -- CLEANUP
