@@ -735,9 +735,16 @@ WaterText.BackgroundTransparency=1; WaterText.TextXAlignment="Left"; WaterText.Z
 local SC_Conn = nil
 
 local function SC_PressSpace()
-    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-    task.wait(0.01)
-    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+    if VirtualInputManager then
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+        task.wait(0.01)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+    else
+        -- Fallback untuk Delta
+        local uis = game:GetService("UserInputService")
+        -- Fitur Skill Check tidak tersedia di executor ini
+        warn("[VD] VirtualInputManager tidak tersedia, Skill Check dinonaktifkan")
+    end
 end
 
 local function SC_LineInGoal(Line, Goal)
