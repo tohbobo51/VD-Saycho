@@ -2318,6 +2318,8 @@ MainTab:Toggle({
 -- ============================================================
 -- END OF SCRIPT
 -- ============================================================
+Info:Label({
+    Title = "Polleser Hub v1.3",
     TextXAlignment = "Center",
     TextSize = 17,
 })
