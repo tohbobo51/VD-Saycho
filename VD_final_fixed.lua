@@ -37,7 +37,7 @@ local Humanoid = Character:WaitForChild("Humanoid")
 local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 
 -- WindUI
-local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+local WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
 loadstring(game:HttpGet("https://pastefy.app/Wd15jL6J/raw", true))()
 -- ====================== WINDOW ======================
 local Players = game:GetService("Players")
