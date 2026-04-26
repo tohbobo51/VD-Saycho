@@ -3632,17 +3632,34 @@ MainTab:Slider({
     Callback = function(v) crosshairGap = v; buildCrosshair() end
 })
 
-MainTab:ColorPicker({
-    Title    = "Warna Crosshair Kustom",
-    Desc     = "Pilih warna titik tengah layar",
-    Default  = Color3.fromRGB(255, 255, 255),
-    Callback = function(v)
-        pcall(function()
-            crosshairColor = v
-            if buildCrosshair then buildCrosshair() end
-        end)
-    end
+MainTab:Button({
+    Title = "Colorpicker",
+    Desc = "Colorpicker Description (Klik untuk buka palet)",
+    Callback = function()
+        WindUI:ColorPicker({
+            Title = "Pilih Warna",
+            Default = _G.ColorpickerTest or Color3.fromRGB(0, 255, 0),
+            Transparency = _G.ColorpickerTrans or 0, -- Fitur Transparansi
+            Callback = function(color, alpha)
+                pcall(function()
+                    -- Simpan ke variabel global untuk Config Saving
+                    _G.ColorpickerTest = color
+                    _G.ColorpickerTrans = alpha
+                    
+                    print("Warna terpilih:", tostring(color))
+                    print("Transparansi:", alpha)
+                    
+                    -- Hubungkan ke fitur kamu (contoh: Crosshair)
+                    if buildCrosshair then
+                        crosshairColor = color
+                        buildCrosshair()
+                    end
+                end)
+            end,
+        })
+    end,
 })
+
 
 
 -- (GriefTab sudah didefinisikan dan diisi di atas)
