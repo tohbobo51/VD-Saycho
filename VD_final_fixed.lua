@@ -3632,24 +3632,18 @@ MainTab:Slider({
     Callback = function(v) crosshairGap = v; buildCrosshair() end
 })
 
-MainTab:Dropdown({
-    Title    = "Warna Crosshair",
-    Values   = {"Putih","Merah","Hijau","Biru","Kuning","Cyan","Ungu","Orange","Pink"},
-    Value    = "Putih",
+MainTab:ColorPicker({
+    Title    = "Warna Crosshair Kustom",
+    Desc     = "Pilih warna titik tengah layar",
+    Default  = Color3.fromRGB(255, 255, 255),
     Callback = function(v)
         pcall(function()
-            local map = {
-                Putih=Color3.fromRGB(255,255,255), Merah=Color3.fromRGB(255,0,0),
-                Hijau=Color3.fromRGB(0,255,0),     Biru=Color3.fromRGB(0,0,255),
-                Kuning=Color3.fromRGB(255,255,0),  Cyan=Color3.fromRGB(0,255,255),
-                Ungu=Color3.fromRGB(168,85,247),   Orange=Color3.fromRGB(255,165,0),
-                Pink=Color3.fromRGB(255,105,180),
-            }
-            crosshairColor = map[v] or Color3.fromRGB(255,255,255)
-            buildCrosshair()
+            crosshairColor = v
+            if buildCrosshair then buildCrosshair() end
         end)
     end
 })
+
 
 -- (GriefTab sudah didefinisikan dan diisi di atas)
 
