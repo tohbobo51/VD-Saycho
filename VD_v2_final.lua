@@ -2187,14 +2187,59 @@ local function updateESP(dt)
                     if data.progressLabel and obj.Name == "Generator" then
                         local pct = 0
                         pcall(function()
-                            -- Cari NumberValue bernama "Progress" atau "GeneratorProgress"
-                            local pv = obj:FindFirstChild("Progress")
-                                or obj:FindFirstChild("GeneratorProgress")
-                                or obj:FindFirstChild("Value")
-                            if pv and pv:IsA("NumberValue") then
-                                pct = math.clamp(math.floor(pv.Value), 0, 100)
-                            else
-                                -- Fallback: cek PointLight warna (hijau = done)
+                            -- Method 1: Cari NumberValue/IntValue di direct children
+                            local pv = nil
+                            for _, child in ipairs(obj:GetChildren()) do
+                                if child:IsA("NumberValue") or child:IsA("IntValue") or child:IsA("DoubleConstrainedValue") then
+                                    if child.Name:find("Progress") or child.Name:find("progress")
+                                       or child.Name:find("Value") or child.Name:find("Percent")
+                                       or child.Name:find("Completion") then
+                                        pv = child; break
+                                    end
+                                end
+                            end
+                            if pv then
+                                local val = pv.Value
+                                pct = math.clamp(math.floor(val <= 1 and val * 100 or val), 0, 100)
+                            end
+
+                            -- Method 2: Cek attributes
+                            if pct == 0 then
+                                local attrVal = obj:GetAttribute("Progress")
+                                    or obj:GetAttribute("GeneratorProgress")
+                                    or obj:GetAttribute("Percent")
+                                    or obj:GetAttribute("Completion")
+                                    or obj:GetAttribute("Value")
+                                if attrVal then
+                                    pct = math.clamp(math.floor(attrVal <= 1 and attrVal * 100 or attrVal), 0, 100)
+                                end
+                            end
+
+                            -- Method 3: Cari di descendants lebih dalam (HitBox dll)
+                            if pct == 0 then
+                                for _, desc in ipairs(obj:GetDescendants()) do
+                                    if (desc:IsA("NumberValue") or desc:IsA("IntValue")) and
+                                       (desc.Name:find("Progress") or desc.Name:find("progress")
+                                        or desc.Name:find("Percent") or desc.Name:find("Completion")) then
+                                        local val = desc.Value
+                                        pct = math.clamp(math.floor(val <= 1 and val * 100 or val), 0, 100)
+                                        break
+                                    end
+                                    -- Cek attributes di child parts
+                                    if desc:IsA("BasePart") then
+                                        local aVal = desc:GetAttribute("Progress")
+                                            or desc:GetAttribute("Percent")
+                                            or desc:GetAttribute("Completion")
+                                        if aVal then
+                                            pct = math.clamp(math.floor(aVal <= 1 and aVal * 100 or aVal), 0, 100)
+                                            break
+                                        end
+                                    end
+                                end
+                            end
+
+                            -- Method 4: Fallback PointLight warna (hijau = done)
+                            if pct == 0 then
                                 local hb = obj:FindFirstChild("HitBox")
                                 local pl2 = hb and hb:FindFirstChildOfClass("PointLight")
                                 if pl2 and pl2.Color == Color3.fromRGB(126,255,126) then
@@ -3206,238 +3251,60 @@ SurTab:Button({
     end
 })
 
--- ─── Revive / Heal ───────────────────────────────────────────
-SurTab:Section({ Title = "Revive / Heal", Icon = "heart" })
+-- ============================================================
+-- SECTION GOD-HEAL & REVIVE (BURST SYSTEM)
+-- ============================================================
+SurTab:Section({ Title = "God-Heal & Revive", Icon = "heart" })
 
--- ══ REMOTE HELPERS (argumen dari RemoteSpy) ══════════════════
--- HealEvent        → FireServer(HumanoidRootPart, false)
--- SkillCheckResult → FireServer("neutral", 0, Character)
--- Reset            → JANGAN dipakai — itu respawn/mati bukan revive!
-
-local remHealEvent = nil
-local function getHealEvent()
-    if remHealEvent then return remHealEvent end
-    local ok, r = pcall(function()
-        return ReplicatedStorage:WaitForChild("Remotes",5)
-            :WaitForChild("Healing",5):WaitForChild("HealEvent",5)
-    end)
-    if ok then remHealEvent = r end
-    return remHealEvent
-end
-
-local remSkillCheck = nil
-local function getSkillCheck()
-    if remSkillCheck then return remSkillCheck end
-    local ok, r = pcall(function()
-        return ReplicatedStorage:WaitForChild("Remotes",5)
-            :WaitForChild("Healing",5):WaitForChild("SkillCheckResultEvent",5)
-    end)
-    if ok then remSkillCheck = r end
-    return remSkillCheck
-end
-
--- ══ 1. INSTAN REVIVE diri sendiri ════════════════════════════
--- HealEvent(hrp, false) spam + SkillCheck("neutral", 0, char)
--- Reset TIDAK dipakai — itu remote respawn (matiin karakter, bukan revive)
+-- Tombol Diri Sendiri (Sekali Klik Langsung Full)
 SurTab:Button({
-    Title       = "💉 Instan Revive Diri Sendiri",
-    Description = "HealEvent(false) 20x + SkillCheck(neutral,0) → langsung bangun",
-    Callback    = function()
-        local ok, err = pcall(function()
-            local char = LocalPlayer.Character
-            if not char then error("Karakter tidak ada") end
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            if not hrp then error("HRP tidak ada") end
-
-            local rh = getHealEvent()
-            if not rh then error("HealEvent tidak ditemukan") end
-
-            -- HealEvent spam dulu
-            for i = 1, 20 do
-                pcall(function() rh:FireServer(hrp, false) end)
+    Title = "Instant God-Heal (Self)",
+    Desc  = "Klik 1x: Full HP + Bangun Seketika (Efek Godmode)",
+    Callback = function()
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            -- Burst 100x tembakan heal agar HP langsung 100% di server
+            for i = 1, 100 do
+                task.spawn(function()
+                    pcall(function()
+                        ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(hrp, false)
+                        ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
+                    end)
+                end)
             end
-
-            -- SkillCheck setelah HealEvent
-            task.delay(0.1, function()
-                local sk = getSkillCheck()
-                if sk then
-                    for i = 1, 20 do
-                        pcall(function() sk:FireServer("neutral", 0, char) end)
-                    end
-                end
-            end)
-        end)
-        WindUI:Notify({
-            Title   = "Revive",
-            Content = ok and "✅ Instan Revive Diri dikirim!" or "❌ Gagal: "..tostring(err),
-            Duration = 2, Icon = ok and "heart" or "alert-circle"
-        })
+            WindUI:Notify({Title = "Success", Content = "Darah Full & Knock Dihapus!", Duration = 2, Icon = "heart"})
+        else
+            WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
+        end
     end
 })
 
--- ══ 2. AUTO REVIVE diri sendiri (loop tiap 1s) ═══════════════
-local autoReviveSelfEnabled = false
-SurTab:Toggle({
-    Title    = "Auto Revive Diri (Instant, loop tiap 1s)",
-    Value    = false,
-    Callback = function(v)
-        autoReviveSelfEnabled = v
-        if v then
-            task.spawn(function()
-                while autoReviveSelfEnabled do
-                    pcall(function()
-                        local char = LocalPlayer.Character
-                        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-                        if not hrp then return end
-
-                        local rh = getHealEvent()
-                        if rh then
-                            for i = 1, 20 do
-                                pcall(function() rh:FireServer(hrp, false) end)
-                            end
-                        end
-
-                        task.delay(0.1, function()
-                            local sk = getSkillCheck()
-                            if sk and char then
-                                for i = 1, 20 do
-                                    pcall(function() sk:FireServer("neutral", 0, char) end)
-                                end
-                            end
+-- Tombol Heal Semua Orang (Support)
+SurTab:Button({
+    Title = "Heal & Revive All Players",
+    Desc  = "Klik 1x: Semua player lain langsung Full HP",
+    Callback = function()
+        local healed = 0
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                local tChar = p.Character
+                local tHrp = tChar.HumanoidRootPart
+                -- Burst 50x ke setiap player
+                for i = 1, 50 do
+                    task.spawn(function()
+                        pcall(function()
+                            ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(tHrp, true)
+                            ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, tChar)
                         end)
                     end)
-                    task.wait(1)
                 end
-            end)
-        end
-    end
-})
-
--- ══ 3. INSTANT SELF HEAL (Fake Bandage bypass) ═══════════════
--- Buat Part palsu bernama "Bandage" di Right Arm → fire ke Items/Bandage/Fire
--- false = Heal (bukan revive), server cek "ada part?" → bypass tanpa item asli
-local function instantHealNoItem()
-    local char = LocalPlayer.Character
-    if not char then return end
-
-    local rightArm = char:FindFirstChild("Right Arm") or char:FindFirstChild("RightHand")
-    if not rightArm then return end
-
-    local fakeBandage = rightArm:FindFirstChild("Bandage")
-    if not fakeBandage then
-        fakeBandage          = Instance.new("Part")
-        fakeBandage.Name        = "Bandage"
-        fakeBandage.Anchored    = true
-        fakeBandage.CanCollide  = false
-        fakeBandage.Transparency = 1
-        fakeBandage.Size        = Vector3.new(0.1, 0.1, 0.1)
-        fakeBandage.Parent      = rightArm
-    end
-
-    local ok, err = pcall(function()
-        local remote = ReplicatedStorage
-            :WaitForChild("Remotes", 5)
-            :WaitForChild("Items", 5)
-            :WaitForChild("Bandage", 5)
-            :WaitForChild("Fire", 5)
-
-        for i = 1, 5 do
-            remote:FireServer(false, fakeBandage)  -- false = Heal
-            task.wait(0.05)
-        end
-
-        pcall(function()
-            ReplicatedStorage:WaitForChild("Remotes",3)
-                :WaitForChild("EmoteHandler",3):FireServer("StopEmote")
-        end)
-    end)
-
-    WindUI:Notify({
-        Title   = "Self Heal",
-        Content = ok and "✅ Instant Self Heal dikirim!" or "❌ Gagal: "..tostring(err),
-        Duration = 2, Icon = ok and "heart" or "alert-circle"
-    })
-end
-
-SurTab:Button({
-    Title       = "🩹 Instant Self Heal (Fake Bandage)",
-    Description = "Buat Bandage palsu di Right Arm → bypass server tanpa item",
-    Callback    = function() instantHealNoItem() end
-})
-
--- ══ 4. REVIVE / HEAL PLAYER LAIN ═════════════════════════════
--- Urutan: HealEvent(tHRP, true) dari 20 coroutine sekaligus
---         lalu SkillCheck("neutral", 0, targetChar) setelah 0.15s
--- "neutral",0 = argumen BENAR dari RemoteSpy (bukan "success",1)
-do
-    local reviveTargetName = ""
-
-    local function buildPlayerList()
-        local list = {}
-        for _, pl in ipairs(Players:GetPlayers()) do
-            if pl ~= LocalPlayer then table.insert(list, pl.Name) end
-        end
-        return #list > 0 and list or {"(Tidak ada player lain)"}
-    end
-
-    local reviveDrop = SurTab:Dropdown({
-        Title    = "Pilih Target Heal/Revive",
-        Values   = buildPlayerList(),
-        Value    = "",
-        Callback = function(v) reviveTargetName = v end
-    })
-
-    SurTab:Button({
-        Title    = "🔄 Refresh List Player",
-        Callback = function()
-            pcall(function() reviveDrop:Refresh(buildPlayerList(), false) end)
-            reviveTargetName = ""
-        end
-    })
-
-    SurTab:Button({
-        Title       = "💊 Revive Player yang Dipilih (Instant)",
-        Description = "HealEvent(false) 20x + SkillCheck(neutral,0) → target langsung hidup",
-        Callback    = function()
-            if reviveTargetName == "" or reviveTargetName:find("Tidak ada") then
-                WindUI:Notify({ Title="Revive", Content="Pilih target dulu!", Duration=2, Icon="alert-circle" })
-                return
+                healed = healed + 1
             end
-            local ok, err = pcall(function()
-                local target = nil
-                for _, pl in ipairs(Players:GetPlayers()) do
-                    if pl.Name == reviveTargetName then target = pl; break end
-                end
-                if not target or not target.Character then error("Target tidak valid") end
-                local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
-                if not tHRP then error("HRP target tidak ada") end
-
-                local rh = getHealEvent()
-                if not rh then error("HealEvent tidak ditemukan") end
-
-                -- HealEvent(tHRP, false) spam dulu
-                for i = 1, 20 do
-                    pcall(function() rh:FireServer(tHRP, false) end)
-                end
-
-                -- SkillCheck("neutral", 0, char) setelah HealEvent
-                task.delay(0.1, function()
-                    local sk = getSkillCheck()
-                    if sk and target.Character then
-                        for i = 1, 20 do
-                            pcall(function() sk:FireServer("neutral", 0, target.Character) end)
-                        end
-                    end
-                end)
-            end)
-            WindUI:Notify({
-                Title   = "Revive",
-                Content = ok and "✅ Revive → "..reviveTargetName or "❌ Gagal: "..tostring(err),
-                Duration = 2, Icon = ok and "heart" or "alert-circle"
-            })
         end
-    })
-end
+        WindUI:Notify({Title = "Support", Content = healed > 0 and ("Seluruh Player Disembuhkan! ("..healed.." player)") or "Tidak ada player lain!", Duration = 2, Icon = "heart"})
+    end
+})
 
 -- ====================== KILLER ======================
 killerTab:Section({ Title = "Feature Killer", Icon = "swords" })
