@@ -2924,10 +2924,9 @@ SurTab:Toggle({
 SurTab:Section({ Title = "Feature Heal", Icon = "cross" })
 
 -- ════ AUTO SELF REVIVE (via Healing/Reset) ═══════════════════
--- Beda dari GodMode: GodMode set HP max SETIAP frame (kebal total)
--- Auto Self Revive: kirim Healing/Reset HANYA saat knocked
--- TIDAK kebal — HP bisa berkurang normal, hanya auto-revive saat knock
--- Menggunakan Healing/Reset(Player) karena HealEvent(HRP,false) REJECT diri sendiri!
+-- HANYA kirim remote ke server, TIDAK manipulasi client-side
+-- Client-side HP/State manipulation = bikin desync = JADI KEBAL
+-- Jadi cuma: Reset + SkillCheck + StopEmote, biar server yang handle
 local autoSelfReviveEnabled = false
 
 SurTab:Toggle({
@@ -2943,21 +2942,17 @@ SurTab:Toggle({
                     local hum = char and char:FindFirstChildOfClass("Humanoid")
                     if hum and (hum.Health <= 0 or hum:GetState() == Enum.HumanoidStateType.FallingDown
                         or hum:GetState() == Enum.HumanoidStateType.PlatformStanding) then
-                        -- Kirim Healing/Reset ke server (satu-satunya cara self-revive)
+                        -- Cuma kirim remote, BIAR SERVER YANG HANDLE SEMUA
+                        -- JANGAN set hum.Health atau ChangeState di client!
                         pcall(function()
                             ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
                         end)
-                        -- Auto-pass skill check
                         pcall(function()
                             ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
                         end)
-                        -- Stop emote biar animasi heal ga nge-block
                         pcall(function()
                             ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
                         end)
-                        -- Force HP max di client
-                        hum.Health = hum.MaxHealth
-                        pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
                     end
                     task.wait(0.5)
                 end
@@ -3347,62 +3342,56 @@ SurTab:Button({
 --   SkillCheckResultEvent("neutral", 0, char) = auto-pass skill check
 --   EmoteHandler("StopEmote") = stop animasi heal biar ga nge-block
 --
--- Jadi self-heal = Healing.Reset + SkillCheck + StopEmote + Force HP client
--- TIDAK kebal — cuma 1x heal, HP bisa turun lagi setelahnya
+-- ⚠️ PENTING: JANGAN manipulasi client-side (set HP, ChangeState)!
+--   - hum.Health = MaxHealth di client = visual aja, server tetap HP rendah = DESYNC
+--   - ChangeState(GettingUp) di client = bikin server kira masih state revive = KEBAL
+--   - Cuma kirim remote ke server, biar server yang handle HP & state!
+--
+-- Limitasi: Healing.Reset cuma work untuk KNOCK (bangun dari down)
+--   Kalau darah cuma berkurang (bukan knock), Reset mungkin ga ngefek
+--   Karena game VD nggak punya remote self-heal untuk partial damage
 -- ============================================================
 SurTab:Section({ Title = "Instant Heal & Revive", Icon = "heart" })
 
 SurTab:Button({
-    Title = "Instant Full Heal (Self)",
-    Desc  = "1x klik: Darah full + bangun dari knock. TIDAK kebal!",
+    Title = "Instant Revive (Self)",
+    Desc  = "Bangun dari knock via Healing/Reset. TIDAK kebal! Partial heal mungkin ga ngefek.",
     Callback = function()
         local char = LocalPlayer.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if not hum then
+        if not char then
             WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
             return
         end
 
-        -- Step 1: Kirim Healing/Reset ke server (satu-satunya cara self-revive yang work!)
+        -- Cuma kirim remote ke server, JANGAN manipulasi client
+        -- Server yang handle HP & state, client ikut server
         pcall(function()
             ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
         end)
-
-        -- Step 2: Auto-pass skill check
         pcall(function()
             ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
         end)
-
-        -- Step 3: Stop emote biar animasi heal ga nge-block
         pcall(function()
             ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
         end)
 
-        -- Step 4: Force HP ke max di client
-        hum.Health = hum.MaxHealth
-
-        -- Step 5: Force bangun dari knock/down state
-        pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-        task.wait(0.1)
-        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
-
-        -- Step 6: Burst Reset + SkillCheck lagi (2x wave, pastikan server benar-benar accept)
-        for wave = 1, 2 do
-            task.spawn(function()
-                task.wait(0.3 * wave)
-                pcall(function()
-                    ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
-                    ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
-                    ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
-                end)
-                if char then
-                    local hum2 = char:FindFirstChildOfClass("Humanoid")
-                    if hum2 then hum2.Health = hum2.MaxHealth end
-                end
+        -- Delayed burst: kirim lagi 2x untuk memastikan server accept
+        task.delay(0.3, function()
+            pcall(function()
+                ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
+                ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
+                ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
             end)
-        end
+        end)
+        task.delay(0.6, function()
+            pcall(function()
+                ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
+                ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
+                ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
+            end)
+        end)
 
-        WindUI:Notify({Title = "Heal", Content = "Darah Full & Bangun dari Knock! (Tidak Kebal)", Duration = 2, Icon = "heart"})
+        WindUI:Notify({Title = "Revive", Content = "Healing/Reset dikirim! Server akan handle HP & state.", Duration = 2, Icon = "heart"})
     end
 })
 
