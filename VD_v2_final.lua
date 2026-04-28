@@ -2923,36 +2923,51 @@ SurTab:Toggle({
 
 SurTab:Section({ Title = "Feature Heal", Icon = "cross" })
 
--- ════ SELF HEAL — Auto aktif, tidak perlu toggle ═══════════════
+-- ════ AUTO SELF REVIVE (via Healing/Reset) ═══════════════════
 -- Beda dari GodMode: GodMode set HP max SETIAP frame (kebal total)
--- Self Heal: set HP max HANYA saat HP drop ke 0 (knocked) → revive otomatis
--- Tidak kebal — masih bisa kena damage dan HP berkurang normal
--- Threshold default 1 = hanya revive saat knocked
--- Ubah selfHealThreshold lebih tinggi (mis 30) kalau mau auto heal saat HP rendah
+-- Auto Self Revive: kirim Healing/Reset HANYA saat knocked
+-- TIDAK kebal — HP bisa berkurang normal, hanya auto-revive saat knock
+-- Menggunakan Healing/Reset(Player) karena HealEvent(HRP,false) REJECT diri sendiri!
+local autoSelfReviveEnabled = false
 
-local selfHealThreshold = 1   -- HP ≤ nilai ini → langsung pulih penuh
-RunService.Heartbeat:Connect(function()
-    local char = LocalPlayer.Character; if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid"); if not hum or hum.MaxHealth <= 0 then return end
-    if hum.Health <= selfHealThreshold then
-        hum.Health = hum.MaxHealth
-        pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-        pcall(function()
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                -- Burst heal ke server
-                for i = 1, 30 do
-                    task.spawn(function()
+SurTab:Toggle({
+    Title = "Auto Self Revive (saat knock)",
+    Desc  = "Otomatis bangun saat knocked via Healing/Reset. TIDAK kebal!",
+    Value = false,
+    Callback = function(v)
+        autoSelfReviveEnabled = v
+        if v then
+            task.spawn(function()
+                while autoSelfReviveEnabled do
+                    local char = LocalPlayer.Character
+                    local hum = char and char:FindFirstChildOfClass("Humanoid")
+                    if hum and (hum.Health <= 0 or hum:GetState() == Enum.HumanoidStateType.FallingDown
+                        or hum:GetState() == Enum.HumanoidStateType.PlatformStanding) then
+                        -- Kirim Healing/Reset ke server (satu-satunya cara self-revive)
                         pcall(function()
-                            ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(hrp, false)
+                            ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
+                        end)
+                        -- Auto-pass skill check
+                        pcall(function()
                             ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
                         end)
-                    end)
+                        -- Stop emote biar animasi heal ga nge-block
+                        pcall(function()
+                            ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
+                        end)
+                        -- Force HP max di client
+                        hum.Health = hum.MaxHealth
+                        pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+                    end
+                    task.wait(0.5)
                 end
-            end
-        end)
+            end)
+            WindUI:Notify({Title = "Auto Revive", Content = "Aktif! Bangun otomatis saat knock.", Duration = 2, Icon = "heart"})
+        else
+            WindUI:Notify({Title = "Auto Revive", Content = "Dimatikan.", Duration = 2, Icon = "heart"})
+        end
     end
-end)
+})
 
 SurTab:Section({ Title = "Feature Cheat", Icon = "bug" })
 
@@ -3326,9 +3341,14 @@ SurTab:Button({
 -- ============================================================
 -- SECTION INSTANT HEAL & REVIVE (SELF ONLY)
 -- ============================================================
--- Beda dari GodMode: GodMode set HP max SETIAP frame (kebal total)
--- Instant Heal: 1x klik → langsung full HP + bangun dari knock
--- TIDAK kebal — masih bisa kena damage setelahnya
+-- Dari RemoteSpy:
+--   HealEvent(HRP, false) = REJECT kalau HRP milik sendiri! Cuma bisa orang lain!
+--   Healing.Reset(Player) = ✅ SATU-SATUNYA cara self-revive (kirim LocalPlayer)
+--   SkillCheckResultEvent("neutral", 0, char) = auto-pass skill check
+--   EmoteHandler("StopEmote") = stop animasi heal biar ga nge-block
+--
+-- Jadi self-heal = Healing.Reset + SkillCheck + StopEmote + Force HP client
+-- TIDAK kebal — cuma 1x heal, HP bisa turun lagi setelahnya
 -- ============================================================
 SurTab:Section({ Title = "Instant Heal & Revive", Icon = "heart" })
 
@@ -3337,44 +3357,52 @@ SurTab:Button({
     Desc  = "1x klik: Darah full + bangun dari knock. TIDAK kebal!",
     Callback = function()
         local char = LocalPlayer.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
         local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if hrp and hum then
-            -- Step 1: Force HP ke max di client
-            hum.Health = hum.MaxHealth
+        if not hum then
+            WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
+            return
+        end
 
-            -- Step 2: Force bangun dari knock/down state
-            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+        -- Step 1: Kirim Healing/Reset ke server (satu-satunya cara self-revive yang work!)
+        pcall(function()
+            ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
+        end)
 
-            -- Step 3: Burst heal ke server agar server juga sync HP
-            for i = 1, 100 do
-                task.spawn(function()
-                    pcall(function()
-                        ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(hrp, false)
-                        ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
-                    end)
+        -- Step 2: Auto-pass skill check
+        pcall(function()
+            ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
+        end)
+
+        -- Step 3: Stop emote biar animasi heal ga nge-block
+        pcall(function()
+            ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
+        end)
+
+        -- Step 4: Force HP ke max di client
+        hum.Health = hum.MaxHealth
+
+        -- Step 5: Force bangun dari knock/down state
+        pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+        task.wait(0.1)
+        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+
+        -- Step 6: Burst Reset + SkillCheck lagi (2x wave, pastikan server benar-benar accept)
+        for wave = 1, 2 do
+            task.spawn(function()
+                task.wait(0.3 * wave)
+                pcall(function()
+                    ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
+                    ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
+                    ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
                 end)
-            end
-
-            -- Step 4: Delayed heal burst lagi setelah 0.5 detik (pastikan knock benar-benar hilang)
-            task.delay(0.5, function()
-                if char and char:FindFirstChild("HumanoidRootPart") then
-                    for i = 1, 50 do
-                        task.spawn(function()
-                            pcall(function()
-                                ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(hrp, false)
-                                ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
-                            end)
-                        end)
-                    end
+                if char then
+                    local hum2 = char:FindFirstChildOfClass("Humanoid")
+                    if hum2 then hum2.Health = hum2.MaxHealth end
                 end
             end)
-
-            WindUI:Notify({Title = "Heal", Content = "Darah Full & Bangun dari Knock! (Tidak Kebal)", Duration = 2, Icon = "heart"})
-        else
-            WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
         end
+
+        WindUI:Notify({Title = "Heal", Content = "Darah Full & Bangun dari Knock! (Tidak Kebal)", Duration = 2, Icon = "heart"})
     end
 })
 
