@@ -299,6 +299,7 @@ local VD = {
     AIM_Smooth     = 0.3,   AIM_VisCheck = true, AIM_Predict = true,
     AIM_ShowFOV    = true,  AIM_Crosshair = false,
     SPEAR_Aimbot   = false, SPEAR_Gravity = 50, SPEAR_Speed = 100,
+    SPEAR_FOV      = 120,   SPEAR_Radius  = 80,
     -- Auto Parry
     AUTO_Parry         = false, AUTO_ParryRange = 15,
     AUTO_ParrySensitivity = 30, AUTO_ParryDelay = 0.5,
@@ -992,17 +993,65 @@ local function AimbotUpdate(cam)
     end
 end
 
--- Spear Aimbot (Veil Killer)
+-- Spear Aimbot (Veil Killer) — dengan FOV & Radius check
+local spearFovCircle = nil
+local spearFovConn = nil
+
+local function drawSpearFOVCircle(radius)
+    if spearFovConn then spearFovConn:Disconnect(); spearFovConn = nil end
+    pcall(function() if spearFovCircle then spearFovCircle:Remove(); spearFovCircle = nil end end)
+    if not radius or radius <= 0 then return end
+    pcall(function()
+        spearFovCircle           = Drawing.new("Circle")
+        spearFovCircle.Radius    = radius
+        spearFovCircle.Color     = Color3.fromRGB(255, 165, 0)  -- oranye, beda dari aimbot & silent
+        spearFovCircle.Thickness = 2
+        spearFovCircle.Filled    = false
+        spearFovCircle.NumSides  = 64
+        local vp = workspace.CurrentCamera.ViewportSize
+        spearFovCircle.Position  = Vector2.new(vp.X / 2, vp.Y / 2)
+        spearFovCircle.Visible   = true
+        spearFovConn = game:GetService("RunService").RenderStepped:Connect(function()
+            if not spearFovCircle then return end
+            pcall(function()
+                local vp2 = workspace.CurrentCamera.ViewportSize
+                spearFovCircle.Position = Vector2.new(vp2.X / 2, vp2.Y / 2)
+            end)
+        end)
+    end)
+end
+
+local function removeSpearFOVCircle()
+    if spearFovConn then spearFovConn:Disconnect(); spearFovConn = nil end
+    pcall(function() if spearFovCircle then spearFovCircle:Remove(); spearFovCircle = nil end end)
+end
+
 local function UpdateSpearAim()
     if not VD.SPEAR_Aimbot or GetRole() ~= "Killer" then return end
     local root = GetRoot(); if not root then return end
-    local closest, closestDist = nil, math.huge
+    local cam = workspace.CurrentCamera
+    local maxRadius = VD.SPEAR_Radius or 80
+    local maxFov    = VD.SPEAR_FOV or 120
+    local closest, closestScore = nil, math.huge
     for _, pl in ipairs(Players:GetPlayers()) do
         if pl ~= LocalPlayer and IsSurvivor(pl) and pl.Character then
             local tr = pl.Character:FindFirstChild("HumanoidRootPart")
             if tr then
                 local d = (tr.Position - root.Position).Magnitude
-                if d < closestDist then closestDist = d; closest = pl end
+                -- Radius check (3D distance in studs)
+                if d <= maxRadius then
+                    -- FOV check (screen-space pixel distance from center)
+                    local screenPos, onScreen = cam:WorldToScreenPoint(tr.Position)
+                    if onScreen then
+                        local screenCenter = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+                        local screenDist = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+                        if screenDist <= maxFov then
+                            -- Score = prioritize closer to crosshair, then closer in 3D
+                            local score = screenDist + (d * 0.5)
+                            if score < closestScore then closestScore = score; closest = pl end
+                        end
+                    end
+                end
             end
         end
     end
@@ -1014,7 +1063,6 @@ local function UpdateSpearAim()
             local t        = dist / (VD.SPEAR_Speed or 100)
             local drop     = 0.5 * (VD.SPEAR_Gravity or 50) * t * t
             local aimPos   = tr.Position + Vector3.new(0, drop, 0)
-            local cam = workspace.CurrentCamera
             if cam then pcall(function() cam.CFrame = CFrame.new(cam.CFrame.Position, aimPos) end) end
         end
     end
@@ -2187,23 +2235,17 @@ local function updateESP(dt)
                     if data.progressLabel and obj.Name == "Generator" then
                         local pct = 0
                         pcall(function()
-                            -- Method 1: Cari NumberValue/IntValue di direct children
-                            local pv = nil
-                            for _, child in ipairs(obj:GetChildren()) do
-                                if child:IsA("NumberValue") or child:IsA("IntValue") or child:IsA("DoubleConstrainedValue") then
-                                    if child.Name:find("Progress") or child.Name:find("progress")
-                                       or child.Name:find("Value") or child.Name:find("Percent")
-                                       or child.Name:find("Completion") then
-                                        pv = child; break
-                                    end
+                            -- Method 1: Attribute "RepairProgress" (UTAMA — ini yang dipakai game VD)
+                            local rp = obj:GetAttribute("RepairProgress")
+                            if rp then
+                                if rp <= 1 then
+                                    pct = math.floor(rp * 100)
+                                else
+                                    pct = math.min(math.floor(rp), 100)
                                 end
                             end
-                            if pv then
-                                local val = pv.Value
-                                pct = math.clamp(math.floor(val <= 1 and val * 100 or val), 0, 100)
-                            end
 
-                            -- Method 2: Cek attributes
+                            -- Method 2: Cek attribute lain yang mungkin dipakai
                             if pct == 0 then
                                 local attrVal = obj:GetAttribute("Progress")
                                     or obj:GetAttribute("GeneratorProgress")
@@ -2215,19 +2257,31 @@ local function updateESP(dt)
                                 end
                             end
 
-                            -- Method 3: Cari di descendants lebih dalam (HitBox dll)
+                            -- Method 3: Cari NumberValue/IntValue di direct children
+                            if pct == 0 then
+                                local pv = nil
+                                for _, child in ipairs(obj:GetChildren()) do
+                                    if child:IsA("NumberValue") or child:IsA("IntValue") or child:IsA("DoubleConstrainedValue") then
+                                        if child.Name:find("Progress") or child.Name:find("progress")
+                                           or child.Name:find("Value") or child.Name:find("Percent")
+                                           or child.Name:find("Completion") or child.Name:find("Repair") then
+                                            pv = child; break
+                                        end
+                                    end
+                                end
+                                if pv then
+                                    local val = pv.Value
+                                    pct = math.clamp(math.floor(val <= 1 and val * 100 or val), 0, 100)
+                                end
+                            end
+
+                            -- Method 4: Cari di descendants lebih dalam (HitBox dll)
                             if pct == 0 then
                                 for _, desc in ipairs(obj:GetDescendants()) do
-                                    if (desc:IsA("NumberValue") or desc:IsA("IntValue")) and
-                                       (desc.Name:find("Progress") or desc.Name:find("progress")
-                                        or desc.Name:find("Percent") or desc.Name:find("Completion")) then
-                                        local val = desc.Value
-                                        pct = math.clamp(math.floor(val <= 1 and val * 100 or val), 0, 100)
-                                        break
-                                    end
-                                    -- Cek attributes di child parts
+                                    -- Cek attribute RepairProgress di child parts
                                     if desc:IsA("BasePart") then
-                                        local aVal = desc:GetAttribute("Progress")
+                                        local aVal = desc:GetAttribute("RepairProgress")
+                                            or desc:GetAttribute("Progress")
                                             or desc:GetAttribute("Percent")
                                             or desc:GetAttribute("Completion")
                                         if aVal then
@@ -2235,10 +2289,18 @@ local function updateESP(dt)
                                             break
                                         end
                                     end
+                                    if (desc:IsA("NumberValue") or desc:IsA("IntValue")) and
+                                       (desc.Name:find("Progress") or desc.Name:find("progress")
+                                        or desc.Name:find("Percent") or desc.Name:find("Completion")
+                                        or desc.Name:find("Repair")) then
+                                        local val = desc.Value
+                                        pct = math.clamp(math.floor(val <= 1 and val * 100 or val), 0, 100)
+                                        break
+                                    end
                                 end
                             end
 
-                            -- Method 4: Fallback PointLight warna (hijau = done)
+                            -- Method 5: Fallback PointLight warna (hijau = done)
                             if pct == 0 then
                                 local hb = obj:FindFirstChild("HitBox")
                                 local pl2 = hb and hb:FindFirstChildOfClass("PointLight")
@@ -2877,7 +2939,17 @@ RunService.Heartbeat:Connect(function()
         pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
         pcall(function()
             local hrp = char:FindFirstChild("HumanoidRootPart")
-            if remHealEvent and hrp then remHealEvent:FireServer(hrp, false) end
+            if hrp then
+                -- Burst heal ke server
+                for i = 1, 30 do
+                    task.spawn(function()
+                        pcall(function()
+                            ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(hrp, false)
+                            ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
+                        end)
+                    end)
+                end
+            end
         end)
     end
 end)
@@ -3252,19 +3324,30 @@ SurTab:Button({
 })
 
 -- ============================================================
--- SECTION GOD-HEAL & REVIVE (BURST SYSTEM)
+-- SECTION INSTANT HEAL & REVIVE (SELF ONLY)
 -- ============================================================
-SurTab:Section({ Title = "God-Heal & Revive", Icon = "heart" })
+-- Beda dari GodMode: GodMode set HP max SETIAP frame (kebal total)
+-- Instant Heal: 1x klik → langsung full HP + bangun dari knock
+-- TIDAK kebal — masih bisa kena damage setelahnya
+-- ============================================================
+SurTab:Section({ Title = "Instant Heal & Revive", Icon = "heart" })
 
--- Tombol Diri Sendiri (Sekali Klik Langsung Full)
 SurTab:Button({
-    Title = "Instant God-Heal (Self)",
-    Desc  = "Klik 1x: Full HP + Bangun Seketika (Efek Godmode)",
+    Title = "Instant Full Heal (Self)",
+    Desc  = "1x klik: Darah full + bangun dari knock. TIDAK kebal!",
     Callback = function()
         local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            -- Burst 100x tembakan heal agar HP langsung 100% di server
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hrp and hum then
+            -- Step 1: Force HP ke max di client
+            hum.Health = hum.MaxHealth
+
+            -- Step 2: Force bangun dari knock/down state
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+
+            -- Step 3: Burst heal ke server agar server juga sync HP
             for i = 1, 100 do
                 task.spawn(function()
                     pcall(function()
@@ -3273,36 +3356,25 @@ SurTab:Button({
                     end)
                 end)
             end
-            WindUI:Notify({Title = "Success", Content = "Darah Full & Knock Dihapus!", Duration = 2, Icon = "heart"})
+
+            -- Step 4: Delayed heal burst lagi setelah 0.5 detik (pastikan knock benar-benar hilang)
+            task.delay(0.5, function()
+                if char and char:FindFirstChild("HumanoidRootPart") then
+                    for i = 1, 50 do
+                        task.spawn(function()
+                            pcall(function()
+                                ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(hrp, false)
+                                ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
+                            end)
+                        end)
+                    end
+                end
+            end)
+
+            WindUI:Notify({Title = "Heal", Content = "Darah Full & Bangun dari Knock! (Tidak Kebal)", Duration = 2, Icon = "heart"})
         else
             WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
         end
-    end
-})
-
--- Tombol Heal Semua Orang (Support)
-SurTab:Button({
-    Title = "Heal & Revive All Players",
-    Desc  = "Klik 1x: Semua player lain langsung Full HP",
-    Callback = function()
-        local healed = 0
-        for _, p in pairs(Players:GetPlayers()) do
-            if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
-                local tChar = p.Character
-                local tHrp = tChar.HumanoidRootPart
-                -- Burst 50x ke setiap player
-                for i = 1, 50 do
-                    task.spawn(function()
-                        pcall(function()
-                            ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(tHrp, true)
-                            ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, tChar)
-                        end)
-                    end)
-                end
-                healed = healed + 1
-            end
-        end
-        WindUI:Notify({Title = "Support", Content = healed > 0 and ("Seluruh Player Disembuhkan! ("..healed.." player)") or "Tidak ada player lain!", Duration = 2, Icon = "heart"})
     end
 })
 
@@ -3875,7 +3947,41 @@ AimTab:Toggle({
     Title       = "Spear Aimbot",
     Description = "Auto-aim kamera dengan kompensasi gravitasi untuk spear Veil",
     Value       = false,
-    Callback    = function(v) VD.SPEAR_Aimbot = v end
+    Callback    = function(v)
+        VD.SPEAR_Aimbot = v
+        if v then
+            drawSpearFOVCircle(VD.SPEAR_FOV)
+        else
+            removeSpearFOVCircle()
+        end
+    end
+})
+AimTab:Toggle({
+    Title       = "Show Spear FOV Circle",
+    Description = "Tampilkan lingkaran FOV untuk Spear Aimbot",
+    Value       = true,
+    Callback    = function(v)
+        if v and VD.SPEAR_Aimbot then
+            drawSpearFOVCircle(VD.SPEAR_FOV)
+        else
+            removeSpearFOVCircle()
+        end
+    end
+})
+AimTab:Slider({
+    Title    = "Spear FOV (pixel dari tengah layar)",
+    Value    = { Min = 30, Max = 500, Default = 120 },
+    Step     = 10,
+    Callback = function(v)
+        VD.SPEAR_FOV = v
+        if VD.SPEAR_Aimbot then drawSpearFOVCircle(v) end
+    end
+})
+AimTab:Slider({
+    Title    = "Spear Radius (studs)",
+    Value    = { Min = 10, Max = 300, Default = 80 },
+    Step     = 5,
+    Callback = function(v) VD.SPEAR_Radius = v end
 })
 AimTab:Slider({
     Title    = "Spear Gravity",
