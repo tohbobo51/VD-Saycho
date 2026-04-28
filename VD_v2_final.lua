@@ -2926,16 +2926,22 @@ SurTab:Section({ Title = "Feature Heal", Icon = "cross" })
 -- ════ AUTO SELF REVIVE (via Healing/Reset + ChangeAttribute) ═══
 -- HANYA kirim remote ke server, TIDAK manipulasi client-side
 -- Client-side HP/State manipulation = bikin desync = JADI KEBAL
+--
+-- MEKANIK GAME VD:
+--   HP < 50  = KNOCKED (bisa di-carry, di-hook killer)
+--   HP 50-100 = ALIVE (normal, bisa jalan/tembak)
+--
 -- Urutan dari RemoteSpy saat di-heal orang lain:
 --   1. ChangeAttribute("Crouchingserver", false) = hapus state injured/crouching
 --   2. EmoteHandler("StopEmote") = stop animasi sekarat
---   3. Healing.Reset(Player) = reset knock state
+--   3. Healing.Reset(Player) = reset knock state + restore HP
+--   4. SkillCheckResultEvent("neutral", 0, char) = auto-pass skill check
 local autoSelfReviveEnabled = false
 
 local function sendSelfHeal()
     local char = LocalPlayer.Character
     if not char then return end
-    -- Step 1: Hapus state injured/crouching (INI KUNCI HEAL PARTIAL DAMAGE!)
+    -- Step 1: Hapus state injured/crouching
     pcall(function()
         ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false)
     end)
@@ -2943,7 +2949,7 @@ local function sendSelfHeal()
     pcall(function()
         ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
     end)
-    -- Step 3: Reset knock state
+    -- Step 3: Reset knock state (server restore HP + state)
     pcall(function()
         ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
     end)
@@ -2951,6 +2957,29 @@ local function sendSelfHeal()
     pcall(function()
         ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
     end)
+end
+
+-- Cek apakah player dalam state KNOCK (HP < 50 atau humanoid state knocked)
+local function isKnocked()
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+    -- Game VD: HP < 50 = knocked
+    if hum.Health < 50 then return true end
+    -- Fallback: cek humanoid state
+    local state = hum:GetState()
+    if state == Enum.HumanoidStateType.FallingDown
+    or state == Enum.HumanoidStateType.PlatformStanding
+    or state == Enum.HumanoidStateType.Dead then
+        return true
+    end
+    -- Cek attribute Crouchingserver (kalau true = injured/sekarat)
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if root and root:GetAttribute("Crouchingserver") == true then
+        return true
+    end
+    return false
 end
 
 SurTab:Toggle({
@@ -2962,10 +2991,7 @@ SurTab:Toggle({
         if v then
             task.spawn(function()
                 while autoSelfReviveEnabled do
-                    local char = LocalPlayer.Character
-                    local hum = char and char:FindFirstChildOfClass("Humanoid")
-                    if hum and (hum.Health <= 0 or hum:GetState() == Enum.HumanoidStateType.FallingDown
-                        or hum:GetState() == Enum.HumanoidStateType.PlatformStanding) then
+                    if isKnocked() then
                         sendSelfHeal()
                     end
                     task.wait(0.5)
@@ -3350,26 +3376,28 @@ SurTab:Button({
 -- ============================================================
 -- SECTION INSTANT HEAL & REVIVE (SELF ONLY)
 -- ============================================================
+-- MEKANIK GAME VD:
+--   HP < 50  = KNOCKED (bisa di-carry, di-hook killer)
+--   HP 50-100 = ALIVE (normal, bisa jalan/tembak)
+--
 -- Dari RemoteSpy (saat di-heal orang lain, full sequence):
 --   1. ChangeAttribute("Crouchingserver", false) = ✅ HAPUS STATE INJURED! KUNCI HEAL!
 --   2. EmoteHandler("StopEmote") = stop animasi sekarat
---   3. Healing.Reset(Player) = reset knock state
+--   3. Healing.Reset(Player) = reset knock state + restore HP ke 100
 --   4. SkillCheckResultEvent("neutral", 0, char) = auto-pass skill check
 --
 -- ⚠️ PENTING: JANGAN manipulasi client-side (set HP, ChangeState)!
 --   - hum.Health = MaxHealth di client = visual aja, server tetap HP rendah = DESYNC
+--   - Client set HP 100 tapi server tetap HP < 50 = status KNOCK masih aktif
+--   - Killer masih bisa carry/hook karena server anggap masih knocked
 --   - ChangeState(GettingUp) di client = bikin server kira masih state revive = KEBAL
 --   - Cuma kirim remote ke server, biar server yang handle HP & state!
---
--- Sekarang ChangeAttribute bisa hapus state "Crouchingserver"
---   = hapus state injured/crouching saat darah berkurang
---   = seharusnya bisa heal partial damage sekarang!
 -- ============================================================
 SurTab:Section({ Title = "Instant Heal & Revive", Icon = "heart" })
 
 SurTab:Button({
     Title = "Instant Full Heal (Self)",
-    Desc  = "1x klik: Full heal + bangun knock. TIDAK kebal!",
+    Desc  = "Bangun dari knock + HP full. Gunakan saat knock (HP < 50). TIDAK kebal!",
     Callback = function()
         if not LocalPlayer.Character then
             WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
@@ -3379,7 +3407,7 @@ SurTab:Button({
         -- Kirim semua remote yang diperlukan (urutan dari RemoteSpy)
         -- JANGAN manipulasi client-side, biar server yang handle
 
-        -- Step 1: Hapus state injured/crouching (INI KUNCI HEAL PARTIAL DAMAGE!)
+        -- Step 1: Hapus state injured/crouching
         pcall(function()
             ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false)
         end)
@@ -3389,7 +3417,7 @@ SurTab:Button({
             ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
         end)
 
-        -- Step 3: Reset knock state
+        -- Step 3: Reset knock state (server restore HP + state)
         pcall(function()
             ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
         end)
@@ -3418,6 +3446,47 @@ SurTab:Button({
         end)
 
         WindUI:Notify({Title = "Heal", Content = "Full Heal dikirim! (Reset + ChangeAttribute + StopEmote)", Duration = 2, Icon = "heart"})
+    end
+})
+
+-- ════ HEAL PARTIAL DAMAGE (HP 50-99, belum knock) ════
+-- ChangeAttribute("Crouchingserver", false) hapus state injured
+-- Mungkin bisa restore HP kalau server detect attribute berubah
+-- Kalau tidak work, berarti tidak ada remote self-heal untuk partial damage
+-- Harus di-heal player lain atau pakai Bandage
+SurTab:Button({
+    Title = "Heal Partial Damage (HP 50-99)",
+    Desc  = "Coba heal saat HP berkurang tapi belum knock. BELUM PASTI WORK!",
+    Callback = function()
+        if not LocalPlayer.Character then
+            WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
+            return
+        end
+
+        -- Coba kirim ChangeAttribute + Reset untuk partial damage
+        -- Reset mungkin ignored kalau belum knocked, tapi coba aja
+        pcall(function()
+            ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false)
+        end)
+        pcall(function()
+            ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
+        end)
+        pcall(function()
+            ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
+        end)
+        pcall(function()
+            ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, LocalPlayer.Character)
+        end)
+
+        -- Burst kedua
+        task.delay(0.3, function()
+            pcall(function()
+                ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false)
+                ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
+            end)
+        end)
+
+        WindUI:Notify({Title = "Heal", Content = "Heal partial dikirim! Cek HP apakah naik. Kalau tidak naik, tidak ada remote self-heal untuk partial damage.", Duration = 4, Icon = "heart"})
     end
 })
 

@@ -56,12 +56,14 @@ game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Windo
 -- SECTION 3: MECHANICS
 -- ═══════════════════════════════════════════════════════════
 
--- ⭐ NEW! 17. Remotes.Mechanics.ChangeAttribute
+-- ⭐ 17. Remotes.Mechanics.ChangeAttribute
 -- Kegunaan: ✅ HAPUS STATE INJURED/CROUCHING — INI KUNCI SELF-HEAL!
--- Saat darah berkurang, game set attribute "Crouchingserver" = true (state sekarat)
+-- Saat darah berkurang, game set attribute "Crouchingserver" = true (state sekarat/injured)
 -- Dengan kirim ChangeAttribute("Crouchingserver", false), state injured dihapus!
--- Ini yang game kirim saat player di-heal orang lain
+-- Ini yang game kirim saat player di-heal orang lain (urutan #1 dari 3 remote)
+-- ⚠️ Game VD: HP < 50 = KNOCKED, HP 50-100 = ALIVE
 -- Argumen: ("Crouchingserver", false) — nama attribute + nilai baru
+-- Bisa juga attribute lain? Cek Explorer > Character > HumanoidRootPart > Attributes
 local args = {
     "Crouchingserver",
     false
@@ -73,11 +75,20 @@ game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Mecha
 -- ═══════════════════════════════════════════════════════════
 
 -- ⚠️ CATATAN PENTING DARI REMOTESPY:
+-- Game VD KNOCK THRESHOLD: HP < 50 = KNOCKED, HP 50-100 = ALIVE
+--
 -- HealEvent(HRP, false) = Hanya bisa heal orang LAIN!
 --   Server akan REJECT kalau HRP = HumanoidRootPart diri sendiri
 --   false = heal (sembuhkan luka), true = revive (bangunkan dari knock)
 -- Healing.Reset(Player) = ✅ Satu-satunya cara self-revive!
 --   Kirim Player (bukan Character/HRP) untuk reset status diri sendiri
+--   Reset = hapus knock state + restore HP ke 100 di SERVER
+--
+-- FULL HEAL SEQUENCE (dari RemoteSpy saat di-heal orang lain):
+--   1. ChangeAttribute("Crouchingserver", false) — hapus injured state
+--   2. EmoteHandler("StopEmote") — stop animasi sekarat
+--   3. Healing.Reset(Player) — reset knock + restore HP
+--   Kalau 3 remote ini dikirim bersamaan = player full heal + bangun knock
 
 -- 6. Remotes.Healing.HealEvent
 -- Kegunaan: Heal/Revive PLAYER LAIN (bukan diri sendiri!)
