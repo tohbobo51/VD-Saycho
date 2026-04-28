@@ -4374,6 +4374,48 @@ MainTab:Colorpicker({
 })
 
 -- ============================================================
+-- ISI TAB FLING & DESTRUCTION
+-- ============================================================
+FlingTab:Section({ Title = "Fling Tools", Icon = "zap" })
+
+FlingTab:Button({
+    Title = "⚡ Fling Killer Terdekat",
+    Desc  = "Lempar killer yang dekat ke luar map",
+    Callback = function()
+        pcall(NEX_FlingNearest)
+        WindUI:Notify({Title = "Fling", Content = "Mengeksekusi Fling ke Killer!", Duration = 2})
+    end,
+})
+
+FlingTab:Button({
+    Title = "💥 Fling Semua Player",
+    Desc  = "Lempar semua orang di server",
+    Callback = function()
+        pcall(NEX_FlingAll)
+    end,
+})
+
+FlingTab:Section({ Title = "Map Destruction (Killer Mode)", Icon = "tool" })
+
+FlingTab:Button({
+    Title = "🔨 Break All Generator",
+    Desc  = "Hancurkan semua generator instan",
+    Callback = function()
+        pcall(NEX_FullGenBreak)
+        WindUI:Notify({Title = "Destroy", Content = "Semua Generator dihancurkan!", Duration = 2})
+    end,
+})
+
+FlingTab:Button({
+    Title = "🪵 Drop All Pallet",
+    Desc  = "Jatuhkan semua pallet di map sekaligus",
+    Callback = function()
+        pcall(NEX_DestroyAllPallets)
+        WindUI:Notify({Title = "Destroy", Content = "Semua Pallet dijatuhkan!", Duration = 2})
+    end,
+})
+
+-- ============================================================
 -- END OF SCRIPT
 -- ============================================================
 Info:Label({
