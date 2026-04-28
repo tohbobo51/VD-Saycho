@@ -2183,17 +2183,18 @@ local function updateESP(dt)
                     data.hpLabel.Text = ""
                     data.hpLabel.Visible = false
 
-                    -- Generator progress label
-                    if data.progressLabel and obj.Name == "Generator" then
-                        local pct = 0
-                        pcall(function()
-                            -- Cari NumberValue bernama "Progress" atau "GeneratorProgress"
-                            local pv = obj:FindFirstChild("Progress")
-                                or obj:FindFirstChild("GeneratorProgress")
-                                or obj:FindFirstChild("Value")
-                            if pv and pv:IsA("NumberValue") then
-                                pct = math.clamp(math.floor(pv.Value), 0, 100)
-                            else
+                    -- Deep scan untuk mencari value progress di dalam folder part/hitbox
+for _, val in pairs(obj:GetDescendants()) do
+    if (val:IsA("NumberValue") or val:IsA("IntValue")) and val.Name:lower():find("progress") then
+        if val.Value <= 1 and val.Value > 0 then
+            pct = math.floor(val.Value * 100) -- Konversi desimal (0.5 = 50%)
+        else
+            pct = math.min(math.floor(val.Value), 100) -- Jika angka bulat
+        end
+        break
+    end
+end
+
                                 -- Fallback: cek PointLight warna (hijau = done)
                                 local hb = obj:FindFirstChild("HitBox")
                                 local pl2 = hb and hb:FindFirstChildOfClass("PointLight")
@@ -3205,6 +3206,40 @@ SurTab:Button({
         })
     end
 })
+
+-- Tambahkan variabel toggle di bagian paling atas script atau dekat variabel lain
+_G.GodmodeHeal = false
+
+SurTab:Toggle({
+    Title = "🛡️ Godmode (Instant Auto Revive)",
+    Desc  = "Otomatis bangun saat knock & Full HP saat kena hit",
+    Value = false,
+    Callback = function(v)
+        _G.GodmodeHeal = v
+        if v then
+            task.spawn(function()
+                while _G.GodmodeHeal do
+                    local char = game.Players.LocalPlayer.Character
+                    local hum = char and char:FindFirstChild("Humanoid")
+                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                    
+                    -- Logika: Jika HP berkurang dari 100, langsung spam heal
+                    if hum and hrp and hum.Health < 100 then
+                        for i = 1, 50 do -- Spam 50 kali dalam satu kedipan mata
+                            game:GetService("ReplicatedStorage").Remotes.Healing.HealEvent:FireServer(hrp, false)
+                            -- Bypass Skillcheck biar gak gagal/meledak
+                            game:GetService("ReplicatedStorage").Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
+                        end
+                    end
+                    task.wait(0.1) -- Cek setiap 0.1 detik
+                end
+            end)
+            WindUI:Notify({Title = "Godmode", Content = "Godmode Aktif!", Duration = 2})
+        end
+    end
+})
+
+
 
 -- ─── Revive / Heal ───────────────────────────────────────────
 SurTab:Section({ Title = "Revive / Heal", Icon = "heart" })
@@ -4505,6 +4540,49 @@ MainTab:Colorpicker({
         end)
     end
 })
+
+-- ============================================================
+-- ISI TAB FLING & DESTRUCTION
+-- ============================================================
+FlingTab:Section({ Title = "Fling Tools", Icon = "zap" })
+
+FlingTab:Button({
+    Title = "⚡ Fling Killer Terdekat",
+    Desc  = "Lempar killer yang dekat ke luar map",
+    Callback = function()
+        pcall(NEX_FlingNearest)
+        WindUI:Notify({Title = "Fling", Content = "Mengeksekusi Fling ke Killer!", Duration = 2})
+    end,
+})
+
+FlingTab:Button({
+    Title = "💥 Fling Semua Player",
+    Desc  = "Lempar semua orang di server",
+    Callback = function()
+        pcall(NEX_FlingAll)
+    end,
+})
+
+FlingTab:Section({ Title = "Map Destruction (Killer Mode)", Icon = "tool" })
+
+FlingTab:Button({
+    Title = "🔨 Break All Generator",
+    Desc  = "Hancurkan semua generator instan",
+    Callback = function()
+        pcall(NEX_FullGenBreak)
+        WindUI:Notify({Title = "Destroy", Content = "Semua Generator dihancurkan!", Duration = 2})
+    end,
+})
+
+FlingTab:Button({
+    Title = "🪵 Drop All Pallet",
+    Desc  = "Jatuhkan semua pallet di map sekaligus",
+    Callback = function()
+        pcall(NEX_DestroyAllPallets)
+        WindUI:Notify({Title = "Destroy", Content = "Semua Pallet dijatuhkan!", Duration = 2})
+    end,
+})
+
 
 -- ============================================================
 -- END OF SCRIPT
