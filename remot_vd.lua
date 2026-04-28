@@ -53,14 +53,27 @@ local args = {
 game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Window"):WaitForChild("fastvault"):FireServer(unpack(args))
 
 -- ═══════════════════════════════════════════════════════════
--- SECTION 3: MECHANICS
+-- SECTION 3: COLLISION
+-- ═══════════════════════════════════════════════════════════
+
+-- ⭐ 18. Remotes.Collision.EnableCollision
+-- Kegunaan: ✅ RE-ENABLE COLLISION SETELAH KNOCK!
+-- Saat player knock, game DISABLE collision player (bisa tembus dll)
+-- Remote ini re-enable collision, WAJIB dikirim saat revive dari knock!
+-- Tanpa remote ini, server masih anggap collision disabled = knock state masih aktif!
+-- Ini yang game kirim PERTAMA saat revive dari knock (RemoteSpy urutan #1)
+-- Tanpa argumen
+game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Collision"):WaitForChild("EnableCollision"):FireServer()
+
+-- ═══════════════════════════════════════════════════════════
+-- SECTION 3.5: MECHANICS
 -- ═══════════════════════════════════════════════════════════
 
 -- ⭐ 17. Remotes.Mechanics.ChangeAttribute
--- Kegunaan: ✅ HAPUS STATE INJURED/CROUCHING — INI KUNCI SELF-HEAL!
+-- Kegunaan: ✅ HAPUS STATE INJURED/CROUCHING
 -- Saat darah berkurang, game set attribute "Crouchingserver" = true (state sekarat/injured)
 -- Dengan kirim ChangeAttribute("Crouchingserver", false), state injured dihapus!
--- Ini yang game kirim saat player di-heal orang lain (urutan #1 dari 3 remote)
+-- Ini yang game kirim saat heal partial damage (bukan knock)
 -- ⚠️ Game VD: HP < 50 = KNOCKED, HP 50-100 = ALIVE
 -- Argumen: ("Crouchingserver", false) — nama attribute + nilai baru
 -- Bisa juga attribute lain? Cek Explorer > Character > HumanoidRootPart > Attributes
@@ -84,11 +97,17 @@ game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Mecha
 --   Kirim Player (bukan Character/HRP) untuk reset status diri sendiri
 --   Reset = hapus knock state + restore HP ke 100 di SERVER
 --
--- FULL HEAL SEQUENCE (dari RemoteSpy saat di-heal orang lain):
---   1. ChangeAttribute("Crouchingserver", false) — hapus injured state
+-- 2 SKENARIO HEAL (berbeda remote!):
+--
+-- SKENARIO A — REVIVE DARI KNOCK (HP < 50):
+--   1. Collision.EnableCollision:FireServer() — ✅ WAJIB! Re-enable collision
 --   2. EmoteHandler("StopEmote") — stop animasi sekarat
 --   3. Healing.Reset(Player) — reset knock + restore HP
---   Kalau 3 remote ini dikirim bersamaan = player full heal + bangun knock
+--
+-- SKENARIO B — HEAL PARTIAL DAMAGE (HP 50-99):
+--   1. ChangeAttribute("Crouchingserver", false) — hapus injured state
+--   2. EmoteHandler("StopEmote") — stop animasi sekarat
+--   3. Healing.Reset(Player) — reset state + restore HP
 
 -- 6. Remotes.Healing.HealEvent
 -- Kegunaan: Heal/Revive PLAYER LAIN (bukan diri sendiri!)

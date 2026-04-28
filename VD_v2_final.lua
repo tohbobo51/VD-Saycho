@@ -2923,7 +2923,7 @@ SurTab:Toggle({
 
 SurTab:Section({ Title = "Feature Heal", Icon = "cross" })
 
--- ════ AUTO SELF REVIVE (via Healing/Reset + ChangeAttribute) ═══
+-- ════ AUTO SELF REVIVE (via Healing/Reset + EnableCollision + ChangeAttribute) ═══
 -- HANYA kirim remote ke server, TIDAK manipulasi client-side
 -- Client-side HP/State manipulation = bikin desync = JADI KEBAL
 --
@@ -2931,29 +2931,39 @@ SurTab:Section({ Title = "Feature Heal", Icon = "cross" })
 --   HP < 50  = KNOCKED (bisa di-carry, di-hook killer)
 --   HP 50-100 = ALIVE (normal, bisa jalan/tembak)
 --
--- Urutan dari RemoteSpy saat di-heal orang lain:
---   1. ChangeAttribute("Crouchingserver", false) = hapus state injured/crouching
+-- RemoteSpy SAAT REVIVE DARI KNOCK (orang lain revive kita):
+--   1. Collision.EnableCollision:FireServer() = ✅ RE-ENABLE COLLISION (saat knock collision disabled!)
 --   2. EmoteHandler("StopEmote") = stop animasi sekarat
 --   3. Healing.Reset(Player) = reset knock state + restore HP
---   4. SkillCheckResultEvent("neutral", 0, char) = auto-pass skill check
+--
+-- RemoteSpy SAAT HEAL FULL HP (bukan dari knock, darah berkurang saja):
+--   1. ChangeAttribute("Crouchingserver", false) = hapus state injured/crouching
+--   2. EmoteHandler("StopEmote") = stop animasi sekarat
+--   3. Healing.Reset(Player) = reset state + restore HP
+--
+-- ⚠️ Jadi ada 2 skenario berbeda! Kita kirim SEMUA remote supaya cover kedua skenario
 local autoSelfReviveEnabled = false
 
 local function sendSelfHeal()
     local char = LocalPlayer.Character
     if not char then return end
-    -- Step 1: Hapus state injured/crouching
+    -- Step 1: Re-enable collision (WAJIB saat revive dari knock!)
+    pcall(function()
+        ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer()
+    end)
+    -- Step 2: Hapus state injured/crouching (untuk heal partial damage)
     pcall(function()
         ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false)
     end)
-    -- Step 2: Stop animasi sekarat
+    -- Step 3: Stop animasi sekarat
     pcall(function()
         ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
     end)
-    -- Step 3: Reset knock state (server restore HP + state)
+    -- Step 4: Reset knock state (server restore HP + state)
     pcall(function()
         ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
     end)
-    -- Step 4: Auto-pass skill check
+    -- Step 5: Auto-pass skill check
     pcall(function()
         ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
     end)
@@ -3380,11 +3390,17 @@ SurTab:Button({
 --   HP < 50  = KNOCKED (bisa di-carry, di-hook killer)
 --   HP 50-100 = ALIVE (normal, bisa jalan/tembak)
 --
--- Dari RemoteSpy (saat di-heal orang lain, full sequence):
---   1. ChangeAttribute("Crouchingserver", false) = ✅ HAPUS STATE INJURED! KUNCI HEAL!
+-- RemoteSpy SAAT REVIVE DARI KNOCK (orang lain revive kita):
+--   1. Collision.EnableCollision:FireServer() = ✅ RE-ENABLE COLLISION!
+--      Saat knock, game DISABLE collision player
+--      Tanpa remote ini, server masih anggap collision disabled = status knock masih aktif!
 --   2. EmoteHandler("StopEmote") = stop animasi sekarat
---   3. Healing.Reset(Player) = reset knock state + restore HP ke 100
---   4. SkillCheckResultEvent("neutral", 0, char) = auto-pass skill check
+--   3. Healing.Reset(Player) = reset knock state + restore HP
+--
+-- RemoteSpy SAAT HEAL FULL HP (darah berkurang, bukan knock):
+--   1. ChangeAttribute("Crouchingserver", false) = hapus state injured/crouching
+--   2. EmoteHandler("StopEmote") = stop animasi sekarat
+--   3. Healing.Reset(Player) = reset state + restore HP
 --
 -- ⚠️ PENTING: JANGAN manipulasi client-side (set HP, ChangeState)!
 --   - hum.Health = MaxHealth di client = visual aja, server tetap HP rendah = DESYNC
@@ -3404,25 +3420,30 @@ SurTab:Button({
             return
         end
 
-        -- Kirim semua remote yang diperlukan (urutan dari RemoteSpy)
+        -- Kirim SEMUA remote yang diperlukan (cover kedua skenario)
         -- JANGAN manipulasi client-side, biar server yang handle
 
-        -- Step 1: Hapus state injured/crouching
+        -- Step 1: Re-enable collision (WAJIB saat revive dari knock!)
+        pcall(function()
+            ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer()
+        end)
+
+        -- Step 2: Hapus state injured/crouching
         pcall(function()
             ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false)
         end)
 
-        -- Step 2: Stop animasi sekarat
+        -- Step 3: Stop animasi sekarat
         pcall(function()
             ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
         end)
 
-        -- Step 3: Reset knock state (server restore HP + state)
+        -- Step 4: Reset knock state (server restore HP + state)
         pcall(function()
             ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
         end)
 
-        -- Step 4: Auto-pass skill check
+        -- Step 5: Auto-pass skill check
         pcall(function()
             ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, LocalPlayer.Character)
         end)
@@ -3430,6 +3451,7 @@ SurTab:Button({
         -- Delayed burst: kirim lagi 2x pastikan server accept
         task.delay(0.3, function()
             pcall(function()
+                ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer()
                 ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false)
                 ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
                 ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
@@ -3438,6 +3460,7 @@ SurTab:Button({
         end)
         task.delay(0.6, function()
             pcall(function()
+                ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer()
                 ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false)
                 ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
                 ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
@@ -3445,15 +3468,14 @@ SurTab:Button({
             end)
         end)
 
-        WindUI:Notify({Title = "Heal", Content = "Full Heal dikirim! (Reset + ChangeAttribute + StopEmote)", Duration = 2, Icon = "heart"})
+        WindUI:Notify({Title = "Heal", Content = "Full Heal dikirim! (EnableCollision + ChangeAttribute + Reset + StopEmote)", Duration = 2, Icon = "heart"})
     end
 })
 
 -- ════ HEAL PARTIAL DAMAGE (HP 50-99, belum knock) ════
 -- ChangeAttribute("Crouchingserver", false) hapus state injured
--- Mungkin bisa restore HP kalau server detect attribute berubah
--- Kalau tidak work, berarti tidak ada remote self-heal untuk partial damage
--- Harus di-heal player lain atau pakai Bandage
+-- Healing.Reset mungkin ignored kalau belum knocked
+-- Tapi kita coba kirim semua remote termasuk EnableCollision
 SurTab:Button({
     Title = "Heal Partial Damage (HP 50-99)",
     Desc  = "Coba heal saat HP berkurang tapi belum knock. BELUM PASTI WORK!",
@@ -3463,8 +3485,10 @@ SurTab:Button({
             return
         end
 
-        -- Coba kirim ChangeAttribute + Reset untuk partial damage
-        -- Reset mungkin ignored kalau belum knocked, tapi coba aja
+        -- Coba kirim semua remote untuk partial damage
+        pcall(function()
+            ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer()
+        end)
         pcall(function()
             ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false)
         end)
@@ -3481,6 +3505,7 @@ SurTab:Button({
         -- Burst kedua
         task.delay(0.3, function()
             pcall(function()
+                ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer()
                 ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false)
                 ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
             end)
