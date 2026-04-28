@@ -53,7 +53,23 @@ local args = {
 game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Window"):WaitForChild("fastvault"):FireServer(unpack(args))
 
 -- ═══════════════════════════════════════════════════════════
--- SECTION 3: HEALING (PENTING!)
+-- SECTION 3: MECHANICS
+-- ═══════════════════════════════════════════════════════════
+
+-- ⭐ NEW! 17. Remotes.Mechanics.ChangeAttribute
+-- Kegunaan: ✅ HAPUS STATE INJURED/CROUCHING — INI KUNCI SELF-HEAL!
+-- Saat darah berkurang, game set attribute "Crouchingserver" = true (state sekarat)
+-- Dengan kirim ChangeAttribute("Crouchingserver", false), state injured dihapus!
+-- Ini yang game kirim saat player di-heal orang lain
+-- Argumen: ("Crouchingserver", false) — nama attribute + nilai baru
+local args = {
+    "Crouchingserver",
+    false
+}
+game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Mechanics"):WaitForChild("ChangeAttribute"):FireServer(unpack(args))
+
+-- ═══════════════════════════════════════════════════════════
+-- SECTION 4: HEALING (PENTING!)
 -- ═══════════════════════════════════════════════════════════
 
 -- ⚠️ CATATAN PENTING DARI REMOTESPY:
