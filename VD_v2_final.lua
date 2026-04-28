@@ -3207,272 +3207,57 @@ SurTab:Button({
     end
 })
 
--- Tambahkan variabel toggle di bagian paling atas script atau dekat variabel lain
-_G.GodmodeHeal = false
+-- ============================================================
+-- SECTION GOD-HEAL & REVIVE (BURST SYSTEM)
+-- ============================================================
+SurTab:Section({ Title = "God-Heal & Revive", Icon = "heart" })
 
-SurTab:Toggle({
-    Title = "🛡️ Godmode (Instant Auto Revive)",
-    Desc  = "Otomatis bangun saat knock & Full HP saat kena hit",
-    Value = false,
-    Callback = function(v)
-        _G.GodmodeHeal = v
-        if v then
-            task.spawn(function()
-                while _G.GodmodeHeal do
-                    local char = game.Players.LocalPlayer.Character
-                    local hum = char and char:FindFirstChild("Humanoid")
-                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                    
-                    -- Logika: Jika HP berkurang dari 100, langsung spam heal
-                    if hum and hrp and hum.Health < 100 then
-                        for i = 1, 50 do -- Spam 50 kali dalam satu kedipan mata
-                            game:GetService("ReplicatedStorage").Remotes.Healing.HealEvent:FireServer(hrp, false)
-                            -- Bypass Skillcheck biar gak gagal/meledak
-                            game:GetService("ReplicatedStorage").Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
-                        end
-                    end
-                    task.wait(0.1) -- Cek setiap 0.1 detik
-                end
-            end)
-            WindUI:Notify({Title = "Godmode", Content = "Godmode Aktif!", Duration = 2})
+-- Fitur untuk diri sendiri
+SurTab:Button({
+    Title = "🛡️ Instant God-Heal (Self)",
+    Desc  = "Klik 1x: Full HP + Bangun dari Knock Seketika",
+    Callback = function()
+        local char = game.Players.LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            -- Burst 100x perintah heal sekaligus untuk efek Godmode
+            for i = 1, 100 do
+                task.spawn(function()
+                    pcall(function()
+                        game:GetService("ReplicatedStorage").Remotes.Healing.HealEvent:FireServer(hrp, false)
+                        game:GetService("ReplicatedStorage").Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
+                    end)
+                end)
+            end
+            WindUI:Notify({Title = "Success", Content = "Darah Full & Status Knock Dihapus!", Duration = 2})
         end
     end
 })
 
-
-
--- ─── Revive / Heal ───────────────────────────────────────────
-SurTab:Section({ Title = "Revive / Heal", Icon = "heart" })
-
--- ══ REMOTE HELPERS (argumen dari RemoteSpy) ══════════════════
--- HealEvent        → FireServer(HumanoidRootPart, false)
--- SkillCheckResult → FireServer("neutral", 0, Character)
--- Reset            → JANGAN dipakai — itu respawn/mati bukan revive!
-
-local remHealEvent = nil
-local function getHealEvent()
-    if remHealEvent then return remHealEvent end
-    local ok, r = pcall(function()
-        return ReplicatedStorage:WaitForChild("Remotes",5)
-            :WaitForChild("Healing",5):WaitForChild("HealEvent",5)
-    end)
-    if ok then remHealEvent = r end
-    return remHealEvent
-end
-
-local remSkillCheck = nil
-local function getSkillCheck()
-    if remSkillCheck then return remSkillCheck end
-    local ok, r = pcall(function()
-        return ReplicatedStorage:WaitForChild("Remotes",5)
-            :WaitForChild("Healing",5):WaitForChild("SkillCheckResultEvent",5)
-    end)
-    if ok then remSkillCheck = r end
-    return remSkillCheck
-end
-
--- ══ 1. INSTAN REVIVE diri sendiri ════════════════════════════
--- HealEvent(hrp, false) spam + SkillCheck("neutral", 0, char)
--- Reset TIDAK dipakai — itu remote respawn (matiin karakter, bukan revive)
+-- Fitur untuk player lain (Heal All)
 SurTab:Button({
-    Title       = "💉 Instan Revive Diri Sendiri",
-    Description = "HealEvent(false) 20x + SkillCheck(neutral,0) → langsung bangun",
-    Callback    = function()
-        local ok, err = pcall(function()
-            local char = LocalPlayer.Character
-            if not char then error("Karakter tidak ada") end
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            if not hrp then error("HRP tidak ada") end
-
-            local rh = getHealEvent()
-            if not rh then error("HealEvent tidak ditemukan") end
-
-            -- HealEvent spam dulu
-            for i = 1, 20 do
-                pcall(function() rh:FireServer(hrp, false) end)
-            end
-
-            -- SkillCheck setelah HealEvent
-            task.delay(0.1, function()
-                local sk = getSkillCheck()
-                if sk then
-                    for i = 1, 20 do
-                        pcall(function() sk:FireServer("neutral", 0, char) end)
-                    end
-                end
-            end)
-        end)
-        WindUI:Notify({
-            Title   = "Revive",
-            Content = ok and "✅ Instan Revive Diri dikirim!" or "❌ Gagal: "..tostring(err),
-            Duration = 2, Icon = ok and "heart" or "alert-circle"
-        })
-    end
-})
-
--- ══ 2. AUTO REVIVE diri sendiri (loop tiap 1s) ═══════════════
-local autoReviveSelfEnabled = false
-SurTab:Toggle({
-    Title    = "Auto Revive Diri (Instant, loop tiap 1s)",
-    Value    = false,
-    Callback = function(v)
-        autoReviveSelfEnabled = v
-        if v then
-            task.spawn(function()
-                while autoReviveSelfEnabled do
-                    pcall(function()
-                        local char = LocalPlayer.Character
-                        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-                        if not hrp then return end
-
-                        local rh = getHealEvent()
-                        if rh then
-                            for i = 1, 20 do
-                                pcall(function() rh:FireServer(hrp, false) end)
-                            end
-                        end
-
-                        task.delay(0.1, function()
-                            local sk = getSkillCheck()
-                            if sk and char then
-                                for i = 1, 20 do
-                                    pcall(function() sk:FireServer("neutral", 0, char) end)
-                                end
-                            end
+    Title = "➕ Heal & Revive All Players",
+    Desc  = "Klik 1x: Semua player di map langsung Full HP & Bangun",
+    Callback = function()
+        for _, p in pairs(game.Players:GetPlayers()) do
+            if p ~= game.Players.LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                local tChar = p.Character
+                local tHrp = tChar.HumanoidRootPart
+                -- Burst 50x perintah heal ke setiap player lain
+                for i = 1, 50 do
+                    task.spawn(function()
+                        pcall(function()
+                            game:GetService("ReplicatedStorage").Remotes.Healing.HealEvent:FireServer(tHrp, true)
+                            game:GetService("ReplicatedStorage").Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, tChar)
                         end)
                     end)
-                    task.wait(1)
                 end
-            end)
-        end
-    end
-})
-
--- ══ 3. INSTANT SELF HEAL (Fake Bandage bypass) ═══════════════
--- Buat Part palsu bernama "Bandage" di Right Arm → fire ke Items/Bandage/Fire
--- false = Heal (bukan revive), server cek "ada part?" → bypass tanpa item asli
-local function instantHealNoItem()
-    local char = LocalPlayer.Character
-    if not char then return end
-
-    local rightArm = char:FindFirstChild("Right Arm") or char:FindFirstChild("RightHand")
-    if not rightArm then return end
-
-    local fakeBandage = rightArm:FindFirstChild("Bandage")
-    if not fakeBandage then
-        fakeBandage          = Instance.new("Part")
-        fakeBandage.Name        = "Bandage"
-        fakeBandage.Anchored    = true
-        fakeBandage.CanCollide  = false
-        fakeBandage.Transparency = 1
-        fakeBandage.Size        = Vector3.new(0.1, 0.1, 0.1)
-        fakeBandage.Parent      = rightArm
-    end
-
-    local ok, err = pcall(function()
-        local remote = ReplicatedStorage
-            :WaitForChild("Remotes", 5)
-            :WaitForChild("Items", 5)
-            :WaitForChild("Bandage", 5)
-            :WaitForChild("Fire", 5)
-
-        for i = 1, 5 do
-            remote:FireServer(false, fakeBandage)  -- false = Heal
-            task.wait(0.05)
-        end
-
-        pcall(function()
-            ReplicatedStorage:WaitForChild("Remotes",3)
-                :WaitForChild("EmoteHandler",3):FireServer("StopEmote")
-        end)
-    end)
-
-    WindUI:Notify({
-        Title   = "Self Heal",
-        Content = ok and "✅ Instant Self Heal dikirim!" or "❌ Gagal: "..tostring(err),
-        Duration = 2, Icon = ok and "heart" or "alert-circle"
-    })
-end
-
-SurTab:Button({
-    Title       = "🩹 Instant Self Heal (Fake Bandage)",
-    Description = "Buat Bandage palsu di Right Arm → bypass server tanpa item",
-    Callback    = function() instantHealNoItem() end
-})
-
--- ══ 4. REVIVE / HEAL PLAYER LAIN ═════════════════════════════
--- Urutan: HealEvent(tHRP, true) dari 20 coroutine sekaligus
---         lalu SkillCheck("neutral", 0, targetChar) setelah 0.15s
--- "neutral",0 = argumen BENAR dari RemoteSpy (bukan "success",1)
-do
-    local reviveTargetName = ""
-
-    local function buildPlayerList()
-        local list = {}
-        for _, pl in ipairs(Players:GetPlayers()) do
-            if pl ~= LocalPlayer then table.insert(list, pl.Name) end
-        end
-        return #list > 0 and list or {"(Tidak ada player lain)"}
-    end
-
-    local reviveDrop = SurTab:Dropdown({
-        Title    = "Pilih Target Heal/Revive",
-        Values   = buildPlayerList(),
-        Value    = "",
-        Callback = function(v) reviveTargetName = v end
-    })
-
-    SurTab:Button({
-        Title    = "🔄 Refresh List Player",
-        Callback = function()
-            pcall(function() reviveDrop:Refresh(buildPlayerList(), false) end)
-            reviveTargetName = ""
-        end
-    })
-
-    SurTab:Button({
-        Title       = "💊 Revive Player yang Dipilih (Instant)",
-        Description = "HealEvent(false) 20x + SkillCheck(neutral,0) → target langsung hidup",
-        Callback    = function()
-            if reviveTargetName == "" or reviveTargetName:find("Tidak ada") then
-                WindUI:Notify({ Title="Revive", Content="Pilih target dulu!", Duration=2, Icon="alert-circle" })
-                return
             end
-            local ok, err = pcall(function()
-                local target = nil
-                for _, pl in ipairs(Players:GetPlayers()) do
-                    if pl.Name == reviveTargetName then target = pl; break end
-                end
-                if not target or not target.Character then error("Target tidak valid") end
-                local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
-                if not tHRP then error("HRP target tidak ada") end
-
-                local rh = getHealEvent()
-                if not rh then error("HealEvent tidak ditemukan") end
-
-                -- HealEvent(tHRP, false) spam dulu
-                for i = 1, 20 do
-                    pcall(function() rh:FireServer(tHRP, false) end)
-                end
-
-                -- SkillCheck("neutral", 0, char) setelah HealEvent
-                task.delay(0.1, function()
-                    local sk = getSkillCheck()
-                    if sk and target.Character then
-                        for i = 1, 20 do
-                            pcall(function() sk:FireServer("neutral", 0, target.Character) end)
-                        end
-                    end
-                end)
-            end)
-            WindUI:Notify({
-                Title   = "Revive",
-                Content = ok and "✅ Revive → "..reviveTargetName or "❌ Gagal: "..tostring(err),
-                Duration = 2, Icon = ok and "heart" or "alert-circle"
-            })
         end
-    })
-end
+        WindUI:Notify({Title = "Support", Content = "Seluruh Server Disembuhkan!", Duration = 2})
+    end
+})
+
 
 -- ====================== KILLER ======================
 killerTab:Section({ Title = "Feature Killer", Icon = "swords" })
