@@ -1397,34 +1397,41 @@ SurTab:Section({ Title = "Feature Self Heal", Icon = "heart" })
 
 -- ═══════════════════════════════════════════════════════════════
 -- SELF HEAL / AUTO REVIVE MODULE
--- Menggunakan getgenv() agar tidak menambah local di main chunk
+-- Semua fungsi pakai local biasa, aman untuk semua executor
 -- ═══════════════════════════════════════════════════════════════
-getgenv().SH = getgenv().SH or { enabled = false, threshold = 1, conn = nil, speedRunning = false }
+local SH = {
+    enabled = false,
+    threshold = 1,
+    conn = nil,
+    speedRunning = false,
+    _healEvent = nil,
+    _skillCheck = nil,
+}
 
 -- Helper: cari remote HealEvent (cached)
-function getgenv().SH.getHealEvent()
-    if getgenv().SH._healEvent then return getgenv().SH._healEvent end
+local function getHealEvent()
+    if SH._healEvent then return SH._healEvent end
     local ok, r = pcall(function()
         return game:GetService("ReplicatedStorage"):WaitForChild("Remotes",5)
             :WaitForChild("Healing",5):WaitForChild("HealEvent",5)
     end)
-    if ok then getgenv().SH._healEvent = r end
-    return getgenv().SH._healEvent
+    if ok then SH._healEvent = r end
+    return SH._healEvent
 end
 
 -- Helper: cari remote SkillCheckResultEvent (cached)
-function getgenv().SH.getSkillCheck()
-    if getgenv().SH._skillCheck then return getgenv().SH._skillCheck end
+local function getSkillCheck()
+    if SH._skillCheck then return SH._skillCheck end
     local ok, r = pcall(function()
         return game:GetService("ReplicatedStorage"):WaitForChild("Remotes",5)
             :WaitForChild("Healing",5):WaitForChild("SkillCheckResultEvent",5)
     end)
-    if ok then getgenv().SH._skillCheck = r end
-    return getgenv().SH._skillCheck
+    if ok then SH._skillCheck = r end
+    return SH._skillCheck
 end
 
 -- Helper: cek apakah knocked/dying
-function getgenv().SH.isKnocked()
+local function isKnocked()
     local char = LocalPlayer.Character
     if not char then return false end
     local hum = char:FindFirstChildOfClass("Humanoid")
@@ -1444,22 +1451,22 @@ function getgenv().SH.isKnocked()
 end
 
 -- Start Self Heal (Heartbeat: auto set HP + fire HealEvent)
-function getgenv().SH.start()
-    if getgenv().SH.conn then getgenv().SH.conn:Disconnect() end
-    getgenv().SH.conn = RunService.Heartbeat:Connect(function()
-        if not getgenv().SH.enabled then return end
+local function startSelfHeal()
+    if SH.conn then SH.conn:Disconnect() end
+    SH.conn = RunService.Heartbeat:Connect(function()
+        if not SH.enabled then return end
         local char = LocalPlayer.Character
         if not char then return end
         local hum = char:FindFirstChildOfClass("Humanoid")
         if not hum or hum.MaxHealth <= 0 then return end
-        if hum.Health <= getgenv().SH.threshold then
+        if hum.Health <= SH.threshold then
             -- Set HP lokal (supaya bangun di client)
             hum.Health = hum.MaxHealth
             pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
             -- Fire HealEvent ke server (supaya server tahu)
             pcall(function()
                 local hrp = char:FindFirstChild("HumanoidRootPart")
-                local rh = getgenv().SH.getHealEvent()
+                local rh = getHealEvent()
                 if rh and hrp then
                     rh:FireServer(hrp, false)
                     rh:FireServer(hrp, true)
@@ -1467,7 +1474,7 @@ function getgenv().SH.start()
             end)
             -- Auto-pass skill check
             pcall(function()
-                local sk = getgenv().SH.getSkillCheck()
+                local sk = getSkillCheck()
                 if sk then sk:FireServer("neutral", 0, char) end
             end)
             -- Fix knock state: remove Status object & Hurtbox
@@ -1497,66 +1504,65 @@ function getgenv().SH.start()
 end
 
 -- Stop Self Heal
-function getgenv().SH.stop()
-    if getgenv().SH.conn then getgenv().SH.conn:Disconnect(); getgenv().SH.conn = nil end
+local function stopSelfHeal()
+    if SH.conn then SH.conn:Disconnect(); SH.conn = nil end
 end
 
 -- Self Heal Toggle
 SurTab:Toggle({
     Title = "Self Heal / Auto Revive",
-    Desc  = "HP drop -> langsung full + bangun + fire HealEvent ke server. Bisa kena damage, tidak kebal.",
+    Description = "HP drop -> langsung full + bangun + fire HealEvent ke server. Bisa kena damage, tidak kebal.",
     Value = false,
     Callback = function(v)
-        getgenv().SH.enabled = v
-        if v then getgenv().SH.start() else getgenv().SH.stop() end
+        SH.enabled = v
+        if v then startSelfHeal() else stopSelfHeal() end
     end,
 })
 
 SurTab:Slider({
     Title = "Threshold HP (kapan heal aktif)",
-    Desc  = "1 = revive saja saat knocked | 50 = auto heal jika HP < 50",
+    Description = "1 = revive saja saat knocked | 50 = auto heal jika HP < 50",
     Value = { Min = 1, Max = 100, Default = 1 },
     Step  = 1,
     Callback = function(v)
-        getgenv().SH.threshold = v
+        SH.threshold = v
     end,
 })
 
 -- ═══════════════════════════════════════════════════════════════
--- SPEED SELF REVIVE — Continuous heal process selama 10 detik
--- Bar PEMULIHAN muncul tapi ga penuh karena butuh player lain
--- SOLUSI: Fire HealEvent + SkillCheckResult BERKELANJUTAN
+-- SPEED SELF REVIVE -- Continuous heal process selama 10 detik
 -- ═══════════════════════════════════════════════════════════════
 SurTab:Button({
     Title       = "Speed Self Revive (10 detik)",
-    Desc        = "Continuous heal process selama 10 detik. Gunakan saat KNOCKED! Bar PEMULIHAN harus penuh.",
+    Description = "Continuous heal process selama 10 detik. Gunakan saat KNOCKED! Bar PEMULIHAN harus penuh.",
     Callback    = function()
-        if getgenv().SH.speedRunning then return end
-        getgenv().SH.speedRunning = true
+        if SH.speedRunning then return end
+        SH.speedRunning = true
         task.spawn(function()
             local char = LocalPlayer.Character
-            if not char then getgenv().SH.speedRunning = false; return end
+            if not char then SH.speedRunning = false; return end
             local hum = char:FindFirstChildOfClass("Humanoid")
             local hrp = char:FindFirstChild("HumanoidRootPart")
-            if not (hum and hrp) then getgenv().SH.speedRunning = false; return end
+            if not (hum and hrp) then SH.speedRunning = false; return end
 
             WindUI:Notify({Title="Speed Revive", Content="Mulai proses heal 10 detik...", Duration=3, Icon="heart"})
 
             -- Step 1: Stop heal dulu
             pcall(function()
-                local sh = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
-                    and game:GetService("ReplicatedStorage").Remotes:FindFirstChild("Healing")
-                    and game:GetService("ReplicatedStorage").Remotes.Healing:FindFirstChild("Stophealing")
+                local rs = game:GetService("ReplicatedStorage")
+                local sh = rs:FindFirstChild("Remotes")
+                    and rs.Remotes:FindFirstChild("Healing")
+                    and rs.Remotes.Healing:FindFirstChild("Stophealing")
                 if sh then sh:FireServer() end
             end)
             task.wait(0.3)
 
             -- Step 2: Get remotes
-            local rh = getgenv().SH.getHealEvent()
-            local sk = getgenv().SH.getSkillCheck()
+            local rh = getHealEvent()
+            local sk = getSkillCheck()
             if not rh then
                 WindUI:Notify({Title="Error", Content="HealEvent tidak ditemukan!", Duration=3, Icon="alert-circle"})
-                getgenv().SH.speedRunning = false; return
+                SH.speedRunning = false; return
             end
 
             -- Step 3: Fire HealEvent sekali untuk mulai
@@ -1565,8 +1571,8 @@ SurTab:Button({
 
             -- Step 4: Continuous heal loop selama ~10 detik
             for i = 1, 40 do
-                if not getgenv().SH.speedRunning then break end
-                if not getgenv().SH.isKnocked() then break end
+                if not SH.speedRunning then break end
+                if not isKnocked() then break end
 
                 pcall(function() rh:FireServer(hrp, false) end)
                 pcall(function() rh:FireServer(hrp, true) end)
@@ -1577,9 +1583,10 @@ SurTab:Button({
 
                 if i % 5 == 0 then
                     pcall(function()
-                        local ca = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
-                            and game:GetService("ReplicatedStorage").Remotes:FindFirstChild("Mechanics")
-                            and game:GetService("ReplicatedStorage").Remotes.Mechanics:FindFirstChild("ChangeAttribute")
+                        local rs = game:GetService("ReplicatedStorage")
+                        local ca = rs:FindFirstChild("Remotes")
+                            and rs.Remotes:FindFirstChild("Mechanics")
+                            and rs.Remotes.Mechanics:FindFirstChild("ChangeAttribute")
                         if ca then ca:FireServer("Crouchingserver", false) end
                     end)
                 end
@@ -1608,17 +1615,17 @@ SurTab:Button({
             end)
 
             WindUI:Notify({Title="Revive", Content="Proses heal selesai!", Duration=3, Icon="heart"})
-            getgenv().SH.speedRunning = false
+            SH.speedRunning = false
         end)
     end
 })
 
 -- ═══════════════════════════════════════════════════════════════
--- INSTANT REVIVE — Burst approach
+-- INSTANT REVIVE -- Burst approach
 -- ═══════════════════════════════════════════════════════════════
 SurTab:Button({
     Title       = "Instant Revive (Burst)",
-    Desc        = "HealEvent 20x + SkillCheck 20x burst. Cepat tapi mungkin ga lengkap.",
+    Description = "HealEvent 20x + SkillCheck 20x burst. Cepat tapi mungkin ga lengkap.",
     Callback    = function()
         pcall(function()
             local char = LocalPlayer.Character
@@ -1627,7 +1634,7 @@ SurTab:Button({
             local hum = char:FindFirstChildOfClass("Humanoid")
             if not hrp then return end
 
-            local rh = getgenv().SH.getHealEvent()
+            local rh = getHealEvent()
             if rh then
                 for i = 1, 20 do
                     pcall(function() rh:FireServer(hrp, false) end)
@@ -1635,7 +1642,7 @@ SurTab:Button({
                 end
             end
 
-            local sk = getgenv().SH.getSkillCheck()
+            local sk = getSkillCheck()
             if sk then
                 for i = 1, 20 do
                     pcall(function() sk:FireServer("neutral", 0, char) end)
@@ -1671,7 +1678,7 @@ SurTab:Button({
 -- ═══════════════════════════════════════════════════════════════
 SurTab:Button({
     Title       = "Debug: Dump Character State",
-    Desc        = "Print HP, state, Status, Hurtbox ke console (F9)",
+    Description = "Print HP, state, Status, Hurtbox ke console (F9)",
     Callback    = function()
         pcall(function()
             local char = LocalPlayer.Character
@@ -1739,7 +1746,7 @@ SurTab:Button({
 local autoHealEnabled = false
 SurTab:Toggle({
     Title = "Auto Heal Other Players",
-    Desc  = "Auto heal survivor terdekat (bukan self-heal)",
+    Description = "Auto heal survivor terdekat (bukan self-heal)",
     Value = false,
     Callback = function(v)
         autoHealEnabled = v
