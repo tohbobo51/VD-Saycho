@@ -1,5 +1,5 @@
 -- ======================
-local version = "2.2.0"
+local version = "2.3.0"
 -- ======================
 
 repeat task.wait() until game:IsLoaded()
@@ -299,7 +299,6 @@ local VD = {
     AIM_Smooth     = 0.3,   AIM_VisCheck = true, AIM_Predict = true,
     AIM_ShowFOV    = true,  AIM_Crosshair = false,
     SPEAR_Aimbot   = false, SPEAR_Gravity = 50, SPEAR_Speed = 100,
-    SPEAR_FOV      = 120,   SPEAR_Radius  = 80,
     -- Auto Parry
     AUTO_Parry         = false, AUTO_ParryRange = 15,
     AUTO_ParrySensitivity = 30, AUTO_ParryDelay = 0.5,
@@ -993,65 +992,17 @@ local function AimbotUpdate(cam)
     end
 end
 
--- Spear Aimbot (Veil Killer) — dengan FOV & Radius check
-local spearFovCircle = nil
-local spearFovConn = nil
-
-local function drawSpearFOVCircle(radius)
-    if spearFovConn then spearFovConn:Disconnect(); spearFovConn = nil end
-    pcall(function() if spearFovCircle then spearFovCircle:Remove(); spearFovCircle = nil end end)
-    if not radius or radius <= 0 then return end
-    pcall(function()
-        spearFovCircle           = Drawing.new("Circle")
-        spearFovCircle.Radius    = radius
-        spearFovCircle.Color     = Color3.fromRGB(255, 165, 0)  -- oranye, beda dari aimbot & silent
-        spearFovCircle.Thickness = 2
-        spearFovCircle.Filled    = false
-        spearFovCircle.NumSides  = 64
-        local vp = workspace.CurrentCamera.ViewportSize
-        spearFovCircle.Position  = Vector2.new(vp.X / 2, vp.Y / 2)
-        spearFovCircle.Visible   = true
-        spearFovConn = game:GetService("RunService").RenderStepped:Connect(function()
-            if not spearFovCircle then return end
-            pcall(function()
-                local vp2 = workspace.CurrentCamera.ViewportSize
-                spearFovCircle.Position = Vector2.new(vp2.X / 2, vp2.Y / 2)
-            end)
-        end)
-    end)
-end
-
-local function removeSpearFOVCircle()
-    if spearFovConn then spearFovConn:Disconnect(); spearFovConn = nil end
-    pcall(function() if spearFovCircle then spearFovCircle:Remove(); spearFovCircle = nil end end)
-end
-
+-- Spear Aimbot (Veil Killer)
 local function UpdateSpearAim()
     if not VD.SPEAR_Aimbot or GetRole() ~= "Killer" then return end
     local root = GetRoot(); if not root then return end
-    local cam = workspace.CurrentCamera
-    local maxRadius = VD.SPEAR_Radius or 80
-    local maxFov    = VD.SPEAR_FOV or 120
-    local closest, closestScore = nil, math.huge
+    local closest, closestDist = nil, math.huge
     for _, pl in ipairs(Players:GetPlayers()) do
         if pl ~= LocalPlayer and IsSurvivor(pl) and pl.Character then
             local tr = pl.Character:FindFirstChild("HumanoidRootPart")
             if tr then
                 local d = (tr.Position - root.Position).Magnitude
-                -- Radius check (3D distance in studs)
-                if d <= maxRadius then
-                    -- FOV check (screen-space pixel distance from center)
-                    local screenPos, onScreen = cam:WorldToScreenPoint(tr.Position)
-                    if onScreen then
-                        local screenCenter = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
-                        local screenDist = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
-                        if screenDist <= maxFov then
-                            -- Score = prioritize closer to crosshair, then closer in 3D
-                            local score = screenDist + (d * 0.5)
-                            if score < closestScore then closestScore = score; closest = pl end
-                        end
-                    end
-                end
+                if d < closestDist then closestDist = d; closest = pl end
             end
         end
     end
@@ -1063,6 +1014,7 @@ local function UpdateSpearAim()
             local t        = dist / (VD.SPEAR_Speed or 100)
             local drop     = 0.5 * (VD.SPEAR_Gravity or 50) * t * t
             local aimPos   = tr.Position + Vector3.new(0, drop, 0)
+            local cam = workspace.CurrentCamera
             if cam then pcall(function() cam.CFrame = CFrame.new(cam.CFrame.Position, aimPos) end) end
         end
     end
@@ -1443,10 +1395,8 @@ local function createESP(obj, baseColor)
     highlight.Enabled = ShowHighlight
     highlight.Parent = obj
 
-    -- Billboard lebih tinggi untuk generator (ada progress bar label)
-    local isGenerator = obj.Name == "Generator"
     local bill = Instance.new("BillboardGui")
-    bill.Size = isGenerator and UDim2.new(0, 200, 0, 65) or UDim2.new(0, 200, 0, 50)
+    bill.Size = UDim2.new(0, 200, 0, 50)
     bill.Adornee = obj
     bill.AlwaysOnTop = true
     bill.Parent = obj
@@ -1456,25 +1406,9 @@ local function createESP(obj, baseColor)
     frame.BackgroundTransparency = 1
     frame.Parent = bill
 
-    -- Progress label — HANYA untuk generator, muncul di baris pertama
-    local progressLabel = nil
-    if isGenerator then
-        progressLabel = Instance.new("TextLabel")
-        progressLabel.Size = UDim2.new(1,0,0,18)
-        progressLabel.Position = UDim2.new(0,0,0,0)
-        progressLabel.BackgroundTransparency = 1
-        progressLabel.Font = "GothamBold"
-        progressLabel.TextSize = 13
-        progressLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
-        progressLabel.TextStrokeColor3 = COLOR_OUTLINE
-        progressLabel.TextStrokeTransparency = 0
-        progressLabel.Text = "⚙ 0%"
-        progressLabel.Parent = frame
-    end
-
     local nameLabel = Instance.new("TextLabel")
-    nameLabel.Size = UDim2.new(1,0,0,18)
-    nameLabel.Position = isGenerator and UDim2.new(0,0,0,18) or UDim2.new(0,0,0,0)
+    nameLabel.Size = UDim2.new(1,0,0.33,0)
+    nameLabel.Position = UDim2.new(0,0,0,0)
     nameLabel.BackgroundTransparency = 1
     nameLabel.Font = "SourceSansBold"
     nameLabel.TextSize = 14
@@ -1486,8 +1420,8 @@ local function createESP(obj, baseColor)
     nameLabel.Parent = frame
 
     local hpLabel = Instance.new("TextLabel")
-    hpLabel.Size = UDim2.new(1,0,0,18)
-    hpLabel.Position = isGenerator and UDim2.new(0,0,0,36) or UDim2.new(0,0,0,18)
+    hpLabel.Size = UDim2.new(1,0,0.33,0)
+    hpLabel.Position = UDim2.new(0,0,0.33,0)
     hpLabel.BackgroundTransparency = 1
     hpLabel.Font = "SourceSansBold"
     hpLabel.TextSize = 14
@@ -1498,8 +1432,8 @@ local function createESP(obj, baseColor)
     hpLabel.Parent = frame
 
     local distLabel = Instance.new("TextLabel")
-    distLabel.Size = UDim2.new(1,0,0,18)
-    distLabel.Position = isGenerator and UDim2.new(0,0,0,54) or UDim2.new(0,0,0,36)
+    distLabel.Size = UDim2.new(1,0,0.33,0)
+    distLabel.Position = UDim2.new(0,0,0.66,0)
     distLabel.BackgroundTransparency = 1
     distLabel.Font = "SourceSansBold"
     distLabel.TextSize = 14
@@ -1514,7 +1448,6 @@ local function createESP(obj, baseColor)
         nameLabel = nameLabel,
         hpLabel = hpLabel,
         distLabel = distLabel,
-        progressLabel = progressLabel,
         color = baseColor
     }
 end
@@ -2226,101 +2159,10 @@ local function updateESP(dt)
                     end
 
                 else
-                    -- Object case (no HP) — bisa generator/hook/pallet/gate
+                    -- Object case (no HP)
 
                     data.hpLabel.Text = ""
                     data.hpLabel.Visible = false
-
-                    -- Generator progress label
-                    if data.progressLabel and obj.Name == "Generator" then
-                        local pct = 0
-                        pcall(function()
-                            -- Method 1: Attribute "RepairProgress" (UTAMA — ini yang dipakai game VD)
-                            local rp = obj:GetAttribute("RepairProgress")
-                            if rp then
-                                if rp <= 1 then
-                                    pct = math.floor(rp * 100)
-                                else
-                                    pct = math.min(math.floor(rp), 100)
-                                end
-                            end
-
-                            -- Method 2: Cek attribute lain yang mungkin dipakai
-                            if pct == 0 then
-                                local attrVal = obj:GetAttribute("Progress")
-                                    or obj:GetAttribute("GeneratorProgress")
-                                    or obj:GetAttribute("Percent")
-                                    or obj:GetAttribute("Completion")
-                                    or obj:GetAttribute("Value")
-                                if attrVal then
-                                    pct = math.clamp(math.floor(attrVal <= 1 and attrVal * 100 or attrVal), 0, 100)
-                                end
-                            end
-
-                            -- Method 3: Cari NumberValue/IntValue di direct children
-                            if pct == 0 then
-                                local pv = nil
-                                for _, child in ipairs(obj:GetChildren()) do
-                                    if child:IsA("NumberValue") or child:IsA("IntValue") or child:IsA("DoubleConstrainedValue") then
-                                        if child.Name:find("Progress") or child.Name:find("progress")
-                                           or child.Name:find("Value") or child.Name:find("Percent")
-                                           or child.Name:find("Completion") or child.Name:find("Repair") then
-                                            pv = child; break
-                                        end
-                                    end
-                                end
-                                if pv then
-                                    local val = pv.Value
-                                    pct = math.clamp(math.floor(val <= 1 and val * 100 or val), 0, 100)
-                                end
-                            end
-
-                            -- Method 4: Cari di descendants lebih dalam (HitBox dll)
-                            if pct == 0 then
-                                for _, desc in ipairs(obj:GetDescendants()) do
-                                    -- Cek attribute RepairProgress di child parts
-                                    if desc:IsA("BasePart") then
-                                        local aVal = desc:GetAttribute("RepairProgress")
-                                            or desc:GetAttribute("Progress")
-                                            or desc:GetAttribute("Percent")
-                                            or desc:GetAttribute("Completion")
-                                        if aVal then
-                                            pct = math.clamp(math.floor(aVal <= 1 and aVal * 100 or aVal), 0, 100)
-                                            break
-                                        end
-                                    end
-                                    if (desc:IsA("NumberValue") or desc:IsA("IntValue")) and
-                                       (desc.Name:find("Progress") or desc.Name:find("progress")
-                                        or desc.Name:find("Percent") or desc.Name:find("Completion")
-                                        or desc.Name:find("Repair")) then
-                                        local val = desc.Value
-                                        pct = math.clamp(math.floor(val <= 1 and val * 100 or val), 0, 100)
-                                        break
-                                    end
-                                end
-                            end
-
-                            -- Method 5: Fallback PointLight warna (hijau = done)
-                            if pct == 0 then
-                                local hb = obj:FindFirstChild("HitBox")
-                                local pl2 = hb and hb:FindFirstChildOfClass("PointLight")
-                                if pl2 and pl2.Color == Color3.fromRGB(126,255,126) then
-                                    pct = 100
-                                end
-                            end
-                        end)
-                        local bar = string.rep("█", math.floor(pct/10)) .. string.rep("░", 10 - math.floor(pct/10))
-                        data.progressLabel.Text = "⚙ " .. pct .. "% " .. bar
-                        -- Warna: hijau kalau selesai, kuning kalau progress, putih kalau 0
-                        if pct >= 100 then
-                            data.progressLabel.TextColor3 = Color3.fromRGB(80, 255, 80)
-                        elseif pct > 0 then
-                            data.progressLabel.TextColor3 = Color3.fromRGB(255, 220, 50)
-                        else
-                            data.progressLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-                        end
-                        data.progressLabel.Visible = true
-                    end
 
                     if ShowDistance then
                         local dist = math.floor((hrp.Position - targetPart.Position).Magnitude)
@@ -2923,195 +2765,57 @@ SurTab:Toggle({
 
 SurTab:Section({ Title = "Feature Heal", Icon = "cross" })
 
--- ════ AUTO SELF REVIVE (via Healing/Reset + EnableCollision + ChangeAttribute) ═══
--- HANYA kirim remote ke server, TIDAK manipulasi client-side
--- Client-side HP/State manipulation = bikin desync = JADI KEBAL
---
--- MEKANIK GAME VD:
---   HP < 50  = KNOCKED (bisa di-carry, di-hook killer)
---   HP 50-100 = ALIVE (normal, bisa jalan/tembak)
---
--- RemoteSpy SAAT REVIVE DARI KNOCK (orang lain revive kita):
---   1. Collision.EnableCollision:FireServer() = ✅ RE-ENABLE COLLISION (saat knock collision disabled!)
---   2. EmoteHandler("StopEmote") = stop animasi sekarat
---   3. Healing.Reset(Player) = reset knock state + restore HP
---
--- RemoteSpy SAAT HEAL FULL HP (bukan dari knock, darah berkurang saja):
---   1. ChangeAttribute("Crouchingserver", false) = hapus state injured/crouching
---   2. EmoteHandler("StopEmote") = stop animasi sekarat
---   3. Healing.Reset(Player) = reset state + restore HP
---
--- ⚠️ Jadi ada 2 skenario berbeda! Kita kirim SEMUA remote supaya cover kedua skenario
-local autoSelfReviveEnabled = false
+-- ════ SELF HEAL — Auto HP restore saat drop ════════════════
+-- HP drop ke threshold → set balik max + bangun dari knocked
+-- BEDA GodMode: GodMode TERUS set max (kebal total)
+-- Self Heal: hanya set max saat HP drop, lalu normal lagi
 
-local function sendSelfHeal()
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    local root = char:FindFirstChild("HumanoidRootPart")
+local selfHealEnabled   = false
+local selfHealThreshold = 1      -- default 1 = hanya revive saat knocked (HP=0)
+local selfHealConn      = nil
 
-    -- ═══ 1. DESTROY Status OBJECT di Humanoid (ini yang track knock!) ═══
-    if hum then
-        pcall(function()
-            local st = hum:FindFirstChild("Status")
-            if st then
-                print("[HEAL] Destroying Humanoid.Status: " .. st.Name .. " (" .. st.ClassName .. ")")
-                st:Destroy()
-            end
-        end)
-    end
-
-    -- ═══ 2. DESTROY Hurtbox (biar killer ga bisa carry/hook) ═══
-    if root then
-        pcall(function()
-            local clone = root:FindFirstChild("HRP_Clone")
-            if clone then
-                local hb = clone:FindFirstChild("Hurtbox")
-                if hb then
-                    print("[HEAL] Destroying Hurtbox")
-                    hb:Destroy()
-                end
-            end
-        end)
-    end
-
-    -- ═══ 3. FIX KNOCK STATE (client-side) ═══
-    if hum then
-        pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
-        pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, false) end)
-        pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false) end)
-        pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-    end
-
-    -- ═══ 4. HAPUS ATTRIBUTE KNOCK ═══
-    if root then
-        pcall(function() root:SetAttribute("Crouchingserver", false) end)
-    end
-
-    -- ═══ 5. REMOTE CALLS ═══
-    pcall(function() ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer() end)
-    pcall(function() ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false) end)
-    pcall(function() ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote") end)
-    pcall(function() ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer) end)
-    pcall(function() ReplicatedStorage.Remotes.Mechanics.cancelaction:FireServer() end)
-end
-
--- ═══ FULL HEAL PROCESS (simulasi heal lengkap dengan skill check berulang) ═══
--- Proses heal VD: HealEvent → SkillCheckEvent → [pass skill check] → ulang sampai full → Reset
--- Kita auto-pass skill check berkali-kali sampai proses heal selesai
-local function sendFullHealProcess()
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    local root = char:FindFirstChild("HumanoidRootPart")
-
-    task.spawn(function()
-        -- Step 1: Destroy Status & Hurtbox dulu
-        if hum then
-            pcall(function()
-                local st = hum:FindFirstChild("Status")
-                if st then st:Destroy() end
-            end)
-        end
-        if root then
-            pcall(function()
-                local clone = root:FindFirstChild("HRP_Clone")
-                if clone then
-                    local hb = clone:FindFirstChild("Hurtbox")
-                    if hb then hb:Destroy() end
-                end
-            end)
-        end
-
-        -- Step 2: Mulai proses heal
-        pcall(function() ReplicatedStorage.Remotes.Healing.Stophealing:FireServer() end)
-        pcall(function() ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer() end)
-        pcall(function() ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false) end)
-        pcall(function() ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote") end)
-
-        task.wait(0.2)
-
-        -- Step 3: HealEvent buat mulai revive
-        if root then
-            pcall(function() ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(root, true) end)
-        end
-
-        task.wait(0.3)
-
-        -- Step 4: Auto-pass skill check BERULANG (simulasi orang lain heal kita)
-        -- Game butuh beberapa skill check pass sampai heal full
-        for i = 1, 15 do
-            pcall(function() ReplicatedStorage.Remotes.Healing.SkillCheckEvent:FireServer() end)
-            task.wait(0.1)
-            pcall(function() ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("perfect", 100, char) end)
-            task.wait(0.1)
-            print("[HEAL] Skill check pass #" .. i)
-        end
-
-        task.wait(0.3)
-
-        -- Step 5: Reset knock state
-        pcall(function() ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer) end)
-
-        -- Step 6: Fix client state
-        if hum then
-            pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
-            pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, false) end)
+local function startSelfHeal()
+    if selfHealConn then selfHealConn:Disconnect() end
+    selfHealConn = RunService.Heartbeat:Connect(function()
+        if not selfHealEnabled then return end
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.MaxHealth <= 0 then return end
+        if hum.Health <= selfHealThreshold then
+            hum.Health = hum.MaxHealth
             pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+            pcall(function()
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                local rh = getHealEvent()
+                if rh and hrp then rh:FireServer(hrp, false) end
+            end)
         end
-
-        -- Step 7: Burst lagi semua remote
-        pcall(function() ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer() end)
-        pcall(function() ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false) end)
-        pcall(function() ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer) end)
-
-        print("[HEAL] Full heal process selesai!")
     end)
 end
 
--- Cek apakah player dalam state KNOCK (HP < 50 atau humanoid state knocked)
-local function isKnocked()
-    local char = LocalPlayer.Character
-    if not char then return false end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return false end
-    -- Game VD: HP < 50 = knocked
-    if hum.Health < 50 then return true end
-    -- Fallback: cek humanoid state
-    local state = hum:GetState()
-    if state == Enum.HumanoidStateType.FallingDown
-    or state == Enum.HumanoidStateType.PlatformStanding
-    or state == Enum.HumanoidStateType.Dead then
-        return true
-    end
-    -- Cek attribute Crouchingserver (kalau true = injured/sekarat)
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if root and root:GetAttribute("Crouchingserver") == true then
-        return true
-    end
-    return false
+local function stopSelfHeal()
+    if selfHealConn then selfHealConn:Disconnect(); selfHealConn = nil end
 end
 
 SurTab:Toggle({
-    Title = "Auto Self Revive (saat knock)",
-    Desc  = "Otomatis bangun saat knocked. TIDAK kebal!",
+    Title = "Self Heal / Auto Revive",
+    Desc  = "HP drop -> langsung full + bangun. Bisa kena damage, tidak kebal.",
     Value = false,
     Callback = function(v)
-        autoSelfReviveEnabled = v
-        if v then
-            task.spawn(function()
-                while autoSelfReviveEnabled do
-                    if isKnocked() then
-                        sendSelfHeal()
-                    end
-                    task.wait(0.5)
-                end
-            end)
-            WindUI:Notify({Title = "Auto Revive", Content = "Aktif! Bangun otomatis saat knock.", Duration = 2, Icon = "heart"})
-        else
-            WindUI:Notify({Title = "Auto Revive", Content = "Dimatikan.", Duration = 2, Icon = "heart"})
-        end
-    end
+        selfHealEnabled = v
+        if v then startSelfHeal() else stopSelfHeal() end
+    end,
+})
+
+SurTab:Slider({
+    Title = "Threshold HP (kapan heal aktif)",
+    Desc  = "1 = revive saja saat knocked | 50 = auto heal jika HP < 50",
+    Value = { Min = 1, Max = 100, Default = 1 },
+    Step  = 1,
+    Callback = function(v)
+        selfHealThreshold = v
+    end,
 })
 
 SurTab:Section({ Title = "Feature Cheat", Icon = "bug" })
@@ -3483,142 +3187,521 @@ SurTab:Button({
     end
 })
 
--- ============================================================
--- SECTION INSTANT HEAL & REVIVE (SELF ONLY)
--- ============================================================
--- MEKANIK GAME VD:
---   HP < 50  = KNOCKED (bisa di-carry, di-hook killer)
---   HP 50-100 = ALIVE (normal, bisa jalan/tembak)
---
--- RemoteSpy SAAT REVIVE DARI KNOCK (orang lain revive kita):
---   1. Collision.EnableCollision:FireServer() = ✅ RE-ENABLE COLLISION!
---      Saat knock, game DISABLE collision player
---      Tanpa remote ini, server masih anggap collision disabled = status knock masih aktif!
---   2. EmoteHandler("StopEmote") = stop animasi sekarat
---   3. Healing.Reset(Player) = reset knock state + restore HP
---
--- RemoteSpy SAAT HEAL FULL HP (darah berkurang, bukan knock):
---   1. ChangeAttribute("Crouchingserver", false) = hapus state injured/crouching
---   2. EmoteHandler("StopEmote") = stop animasi sekarat
---   3. Healing.Reset(Player) = reset state + restore HP
---
--- ⚠️ PENTING: JANGAN manipulasi client-side (set HP, ChangeState)!
---   - hum.Health = MaxHealth di client = visual aja, server tetap HP rendah = DESYNC
---   - Client set HP 100 tapi server tetap HP < 50 = status KNOCK masih aktif
---   - Killer masih bisa carry/hook karena server anggap masih knocked
---   - ChangeState(GettingUp) di client = bikin server kira masih state revive = KEBAL
---   - Cuma kirim remote ke server, biar server yang handle HP & state!
--- ============================================================
-SurTab:Section({ Title = "Instant Heal & Revive", Icon = "heart" })
+-- ─── Revive / Heal ───────────────────────────────────────────
+SurTab:Section({ Title = "Revive / Heal", Icon = "heart" })
 
-SurTab:Button({
-    Title = "Instant Full Heal + Anti-Knock",
-    Desc  = "Destroy Status + Hurtbox + Fix state + Remote burst. Cek console!",
-    Callback = function()
-        if not LocalPlayer.Character then
-            WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
-            return
-        end
+-- ══ REMOTE HELPERS (argumen dari RemoteSpy) ══════════════════
+-- HealEvent        → FireServer(HumanoidRootPart, bool)
+--   false = heal diri sendiri, true = heal orang lain
+-- SkillCheckResult → FireServer("neutral", 0, Character)
+-- SkillCheckEvent  → FireServer() — trigger skill check
+-- HealAnimRec      → FireServer() — advance heal animation
+-- Reset            → JANGAN dipakai — itu respawn/mati bukan revive!
+-- Stophealing      → FireServer() — stop heal process
 
-        sendSelfHeal()
+local remHealEvent = nil
+local function getHealEvent()
+    if remHealEvent then return remHealEvent end
+    local ok, r = pcall(function()
+        return ReplicatedStorage:WaitForChild("Remotes",5)
+            :WaitForChild("Healing",5):WaitForChild("HealEvent",5)
+    end)
+    if ok then remHealEvent = r end
+    return remHealEvent
+end
 
-        -- Burst lagi
-        task.delay(0.5, function() sendSelfHeal() end)
+local remSkillCheck = nil
+local function getSkillCheck()
+    if remSkillCheck then return remSkillCheck end
+    local ok, r = pcall(function()
+        return ReplicatedStorage:WaitForChild("Remotes",5)
+            :WaitForChild("Healing",5):WaitForChild("SkillCheckResultEvent",5)
+    end)
+    if ok then remSkillCheck = r end
+    return remSkillCheck
+end
 
-        WindUI:Notify({Title = "Heal", Content = "Status destroyed + Hurtbox destroyed + Remote burst!", Duration = 3, Icon = "heart"})
+local remSkillCheckEvent = nil
+local function getSkillCheckEvent()
+    if remSkillCheckEvent then return remSkillCheckEvent end
+    local ok, r = pcall(function()
+        return ReplicatedStorage:WaitForChild("Remotes",5)
+            :WaitForChild("Healing",5):WaitForChild("SkillCheckEvent",5)
+    end)
+    if ok then remSkillCheckEvent = r end
+    return remSkillCheckEvent
+end
+
+local remHealAnimRec = nil
+local function getHealAnimRec()
+    if remHealAnimRec then return remHealAnimRec end
+    local ok, r = pcall(function()
+        return ReplicatedStorage:WaitForChild("Remotes",5)
+            :WaitForChild("Healing",5):WaitForChild("HealAnimRec",5)
+    end)
+    if ok then remHealAnimRec = r end
+    return remHealAnimRec
+end
+
+-- ══ CEK KNOCK STATE ════════════════════════════════════════════
+local function isKnocked()
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+    if hum.Health < 50 then return true end
+    local state = hum:GetState()
+    if state == Enum.HumanoidStateType.FallingDown
+    or state == Enum.HumanoidStateType.PlatformStanding
+    or state == Enum.HumanoidStateType.Dead then
+        return true
     end
-})
-
-SurTab:Button({
-    Title = "Full Heal Process (15x Skill Check)",
-    Desc  = "Simulasi heal lengkap: HealEvent + 15x auto-pass skill check + Reset. Untuk knock!",
-    Callback = function()
-        if not LocalPlayer.Character then
-            WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
-            return
-        end
-
-        sendFullHealProcess()
-
-        WindUI:Notify({Title = "Heal", Content = "Full heal process mulai! 15x skill check auto-pass. Cek console!", Duration = 5, Icon = "heart"})
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if root and root:GetAttribute("Crouchingserver") == true then
+        return true
     end
-})
+    return false
+end
 
-SurTab:Button({
-    Title = "Destroy Hurtbox Only",
-    Desc  = "Hapus Hurtbox biar killer ga bisa carry/hook kamu saat knock.",
-    Callback = function()
+-- ══ 1. SPEED SELF REVIVE — Continuous heal process ═══════════
+-- MASALAH: Bar PEMULIHAN muncul tapi ga penuh karena butuh
+-- player lain yang heal terus-menerus sampai 100%
+-- SOLUSI: Fire HealEvent + SkillCheckResult BERKELANJUTAN
+-- selama ~10 detik, simulasi heal terus dari "orang lain"
+local speedReviveRunning = false
+local function doSpeedSelfRevive()
+    if speedReviveRunning then return end
+    speedReviveRunning = true
+
+    task.spawn(function()
         local char = LocalPlayer.Character
-        if not char then return end
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if root then
+        if not char then speedReviveRunning = false; return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not (hum and hrp) then speedReviveRunning = false; return end
+
+        WindUI:Notify({Title="Speed Revive", Content="Mulai proses heal 10 detik...", Duration=3, Icon="heart"})
+        print("[REVIVE] Speed Self Revive dimulai")
+
+        -- Step 1: Stop heal dulu biar bersih
+        pcall(function()
+            local rem = ReplicatedStorage:FindFirstChild("Remotes")
+            local h = rem and rem:FindFirstChild("Healing")
+            local sh = h and h:FindFirstChild("Stophealing")
+            if sh then sh:FireServer() end
+        end)
+        task.wait(0.3)
+
+        -- Step 2: Mulai heal process (HealEvent hrp, false = self)
+        local rh = getHealEvent()
+        local sk = getSkillCheck()
+        local skEvt = getSkillCheckEvent()
+        local animRec = getHealAnimRec()
+
+        if not rh then
+            WindUI:Notify({Title="Error", Content="HealEvent tidak ditemukan!", Duration=3, Icon="alert-circle"})
+            speedReviveRunning = false; return
+        end
+
+        -- Step 3: Fire HealEvent sekali untuk mulai proses
+        pcall(function() rh:FireServer(hrp, false) end)
+        task.wait(0.2)
+
+        -- Step 4: Continuous heal loop selama ~10 detik
+        -- Setiap tick: HealEvent + SkillCheckResult + HealAnimRec
+        -- Ini simulasi "orang lain heal kita terus-menerus"
+        for i = 1, 40 do
+            if not speedReviveRunning then break end
+            if not isKnocked() then
+                print("[REVIVE] Sudah tidak knocked! Berhenti.")
+                break
+            end
+
+            -- Fire HealEvent (self-heal tick)
+            pcall(function() rh:FireServer(hrp, false) end)
+
+            -- Juga coba fire dengan TRUE (seolah orang lain heal kita)
+            pcall(function() rh:FireServer(hrp, true) end)
+
+            -- Auto-pass skill check
+            if sk then
+                pcall(function() sk:FireServer("neutral", 0, char) end)
+            end
+
+            -- Trigger skill check event
+            if skEvt then
+                pcall(function() skEvt:FireServer() end)
+            end
+
+            -- Advance heal animation
+            if animRec then
+                pcall(function() animRec:FireServer() end)
+            end
+
+            -- Setiap 5 tick, juga kirim auxiliary remotes
+            if i % 5 == 0 then
+                pcall(function()
+                    ReplicatedStorage:FindFirstChild("Remotes")
+                        :FindFirstChild("Mechanics")
+                        :FindFirstChild("ChangeAttribute")
+                        :FireServer("Crouchingserver", false)
+                end)
+                pcall(function()
+                    ReplicatedStorage:FindFirstChild("Remotes")
+                        :FindFirstChild("EmoteHandler")
+                        :FireServer("StopEmote")
+                end)
+                pcall(function()
+                    ReplicatedStorage:FindFirstChild("Remotes")
+                        :FindFirstChild("Collision")
+                        :FindFirstChild("EnableCollision")
+                        :FireServer()
+                end)
+            end
+
+            task.wait(0.25)
+        end
+
+        -- Step 5: Fix client state
+        if hum then
+            pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+            pcall(function() hum.Health = hum.MaxHealth end)
+        end
+
+        -- Step 6: Destroy Status object kalau masih ada
+        if hum then
             pcall(function()
-                local clone = root:FindFirstChild("HRP_Clone")
+                local st = hum:FindFirstChild("Status")
+                if st then st:Destroy(); print("[REVIVE] Status destroyed") end
+            end)
+        end
+
+        -- Step 7: Destroy Hurtbox kalau masih ada
+        if hrp then
+            pcall(function()
+                local clone = hrp:FindFirstChild("HRP_Clone")
                 if clone then
                     local hb = clone:FindFirstChild("Hurtbox")
-                    if hb then
-                        hb:Destroy()
-                        WindUI:Notify({Title = "Hurtbox", Content = "Hurtbox destroyed! Killer ga bisa interaksi.", Duration = 3, Icon = "shield"})
-                    else
-                        WindUI:Notify({Title = "Hurtbox", Content = "Hurtbox tidak ditemukan.", Duration = 2, Icon = "alert-circle"})
+                    if hb then hb:Destroy(); print("[REVIVE] Hurtbox destroyed") end
+                end
+            end)
+        end
+
+        print("[REVIVE] Speed Self Revive selesai!")
+        WindUI:Notify({Title="Revive", Content="Proses heal selesai! Cek apakah sudah bangun.", Duration=3, Icon="heart"})
+        speedReviveRunning = false
+    end)
+end
+
+SurTab:Button({
+    Title       = "Speed Self Revive (10 detik)",
+    Desc        = "Continuous heal process selama 10 detik. Gunakan saat KNOCKED! Bar PEMULIHAN harus penuh.",
+    Callback    = function() doSpeedSelfRevive() end
+})
+
+-- ══ 2. INSTAN REVIVE — Burst approach ════════════════════════
+-- HealEvent(hrp, false) 20x + SkillCheck(neutral,0) 20x
+SurTab:Button({
+    Title       = "Instant Revive (Burst)",
+    Desc        = "HealEvent 20x + SkillCheck 20x burst. Cepat tapi mungkin ga lengkap.",
+    Callback    = function()
+        local ok, err = pcall(function()
+            local char = LocalPlayer.Character
+            if not char then error("Karakter tidak ada") end
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if not hrp then error("HRP tidak ada") end
+
+            local rh = getHealEvent()
+            if not rh then error("HealEvent tidak ditemukan") end
+
+            for i = 1, 20 do
+                pcall(function() rh:FireServer(hrp, false) end)
+                pcall(function() rh:FireServer(hrp, true) end)
+            end
+
+            task.delay(0.1, function()
+                local sk = getSkillCheck()
+                if sk then
+                    for i = 1, 20 do
+                        pcall(function() sk:FireServer("neutral", 0, char) end)
                     end
-                else
-                    WindUI:Notify({Title = "Hurtbox", Content = "HRP_Clone tidak ditemukan.", Duration = 2, Icon = "alert-circle"})
+                end
+            end)
+
+            -- Also try SkillCheckEvent
+            task.delay(0.15, function()
+                local skEvt = getSkillCheckEvent()
+                if skEvt then
+                    for i = 1, 10 do
+                        pcall(function() skEvt:FireServer() end)
+                    end
+                end
+            end)
+
+            -- Fix client state
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
+                pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+                pcall(function() hum.Health = hum.MaxHealth end)
+            end
+        end)
+        WindUI:Notify({
+            Title   = "Revive",
+            Content = ok and "Burst Revive dikirim!" or "Gagal: "..tostring(err),
+            Duration = 2, Icon = ok and "heart" or "alert-circle"
+        })
+    end
+})
+
+-- ══ 3. AUTO SPEED REVIVE — Otomatis saat knock ══════════════
+local autoSpeedReviveEnabled = false
+SurTab:Toggle({
+    Title    = "Auto Speed Revive (saat knock)",
+    Desc     = "Otomatis jalankan Speed Revive saat terdeteksi knocked",
+    Value    = false,
+    Callback = function(v)
+        autoSpeedReviveEnabled = v
+        if v then
+            task.spawn(function()
+                while autoSpeedReviveEnabled do
+                    if isKnocked() and not speedReviveRunning then
+                        doSpeedSelfRevive()
+                    end
+                    task.wait(2)
                 end
             end)
         end
     end
 })
 
+-- ══ 4. INSTANT SELF HEAL (Fake Bandage bypass) ═══════════════
+-- Buat Part palsu bernama "Bandage" di Right Arm → fire ke Items/Bandage/Fire
+-- false = Heal (bukan revive), server cek "ada part?" → bypass tanpa item asli
+local function instantHealNoItem()
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    local rightArm = char:FindFirstChild("Right Arm") or char:FindFirstChild("RightHand")
+    if not rightArm then return end
+
+    local fakeBandage = rightArm:FindFirstChild("Bandage")
+    if not fakeBandage then
+        fakeBandage          = Instance.new("Part")
+        fakeBandage.Name        = "Bandage"
+        fakeBandage.Anchored    = true
+        fakeBandage.CanCollide  = false
+        fakeBandage.Transparency = 1
+        fakeBandage.Size        = Vector3.new(0.1, 0.1, 0.1)
+        fakeBandage.Parent      = rightArm
+    end
+
+    local ok, err = pcall(function()
+        local remote = ReplicatedStorage
+            :WaitForChild("Remotes", 5)
+            :WaitForChild("Items", 5)
+            :WaitForChild("Bandage", 5)
+            :WaitForChild("Fire", 5)
+
+        for i = 1, 5 do
+            remote:FireServer(false, fakeBandage)  -- false = Heal
+            task.wait(0.05)
+        end
+
+        pcall(function()
+            ReplicatedStorage:WaitForChild("Remotes",3)
+                :FindFirstChild("EmoteHandler"):FireServer("StopEmote")
+        end)
+    end)
+
+    WindUI:Notify({
+        Title   = "Self Heal",
+        Content = ok and "Instant Self Heal dikirim!" or "Gagal: "..tostring(err),
+        Duration = 2, Icon = ok and "heart" or "alert-circle"
+    })
+end
+
 SurTab:Button({
-    Title = "Destroy Status Object",
-    Desc  = "Hapus Humanoid.Status yang track knock state. Cek console!",
-    Callback = function()
+    Title       = "Instant Self Heal (Fake Bandage)",
+    Desc        = "Buat Bandage palsu di Right Arm. Untuk HEAL (bukan revive).",
+    Callback    = function() instantHealNoItem() end
+})
+
+-- ══ 5. FORCE REVIVE — Destroy Status + Hurtbox + All remotes ══
+-- Ini approach paling agresif: destroy object yang track knock state
+-- + fire semua remote yang bisa reset state
+SurTab:Button({
+    Title       = "Force Revive (Agresif)",
+    Desc        = "Destroy Status + Hurtbox + Fix state + Remote burst. PAKSA bangun!",
+    Callback    = function()
         local char = LocalPlayer.Character
-        if not char then return end
+        if not char then
+            WindUI:Notify({Title="Error", Content="Karakter tidak ditemukan!", Duration=2, Icon="alert-circle"})
+            return
+        end
+
         local hum = char:FindFirstChildOfClass("Humanoid")
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+
+        -- Destroy Status object
         if hum then
             pcall(function()
                 local st = hum:FindFirstChild("Status")
                 if st then
-                    print("[HEAL] Status class: " .. st.ClassName)
-                    -- Print value sebelum destroy
-                    if st:IsA("StringValue") then
-                        print("[HEAL] Status value: " .. st.Value)
-                    elseif st:IsA("BoolValue") then
-                        print("[HEAL] Status value: " .. tostring(st.Value))
-                    elseif st:IsA("NumberValue") then
-                        print("[HEAL] Status value: " .. tostring(st.Value))
-                    elseif st:IsA("ObjectValue") then
-                        print("[HEAL] Status value: " .. tostring(st.Value))
-                    end
-                    -- Print children
-                    for _, child in ipairs(st:GetChildren()) do
-                        print("[HEAL] Status child: " .. child.Name .. " (" .. child.ClassName .. ")")
-                    end
+                    print("[FORCE] Destroying Humanoid.Status: " .. st.Name .. " (" .. st.ClassName .. ")")
                     st:Destroy()
-                    WindUI:Notify({Title = "Status", Content = "Status destroyed! Cek console buat info.", Duration = 3, Icon = "shield"})
-                else
-                    WindUI:Notify({Title = "Status", Content = "Status object tidak ditemukan.", Duration = 2, Icon = "alert-circle"})
                 end
             end)
         end
+
+        -- Destroy Hurtbox
+        if hrp then
+            pcall(function()
+                local clone = hrp:FindFirstChild("HRP_Clone")
+                if clone then
+                    local hb = clone:FindFirstChild("Hurtbox")
+                    if hb then
+                        print("[FORCE] Destroying Hurtbox")
+                        hb:Destroy()
+                    end
+                end
+            end)
+        end
+
+        -- Fix humanoid state
+        if hum then
+            pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
+            pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, false) end)
+            pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false) end)
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+            pcall(function() hum.Health = hum.MaxHealth end)
+        end
+
+        -- Remove attributes
+        if hrp then
+            pcall(function() hrp:SetAttribute("Crouchingserver", false) end)
+        end
+
+        -- Fire all relevant remotes
+        pcall(function() ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer() end)
+        pcall(function() ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false) end)
+        pcall(function() ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote") end)
+        pcall(function() ReplicatedStorage.Remotes.Mechanics.cancelaction:FireServer() end)
+
+        -- Also fire heal remotes
+        pcall(function()
+            local rh = getHealEvent()
+            if rh and hrp then
+                for i = 1, 10 do
+                    rh:FireServer(hrp, false)
+                    rh:FireServer(hrp, true)
+                end
+            end
+        end)
+        pcall(function()
+            local sk = getSkillCheck()
+            if sk then
+                for i = 1, 10 do
+                    sk:FireServer("neutral", 0, char)
+                end
+            end
+        end)
+
+        -- Burst lagi setelah 0.5s
+        task.delay(0.5, function()
+            pcall(function() ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer() end)
+            pcall(function() ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false) end)
+            pcall(function() ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote") end)
+            pcall(function() ReplicatedStorage.Remotes.Mechanics.cancelaction:FireServer() end)
+        end)
+
+        WindUI:Notify({Title="Force Revive", Content="Status destroyed + Hurtbox destroyed + Remote burst!", Duration=3, Icon="heart"})
     end
 })
 
--- ════ DEBUG: DUMP CHARACTER STATE SAAT KNOCK ════
--- INI PENTING! Biar kita tahu apa yang track knock status di character
+-- ══ 6. REVIVE / HEAL PLAYER LAIN ═════════════════════════════
+do
+    local reviveTargetName = ""
+
+    local function buildPlayerList()
+        local list = {}
+        for _, pl in ipairs(Players:GetPlayers()) do
+            if pl ~= LocalPlayer then table.insert(list, pl.Name) end
+        end
+        return #list > 0 and list or {"(Tidak ada player lain)"}
+    end
+
+    local reviveDrop = SurTab:Dropdown({
+        Title    = "Pilih Target Heal/Revive",
+        Values   = buildPlayerList(),
+        Value    = "",
+        Callback = function(v) reviveTargetName = v end
+    })
+
+    SurTab:Button({
+        Title    = "Refresh List Player",
+        Callback = function()
+            pcall(function() reviveDrop:Refresh(buildPlayerList(), false) end)
+            reviveTargetName = ""
+        end
+    })
+
+    SurTab:Button({
+        Title       = "Revive Player yang Dipilih (Instant)",
+        Desc        = "HealEvent 20x + SkillCheck 20x ke target",
+        Callback    = function()
+            if reviveTargetName == "" or reviveTargetName:find("Tidak ada") then
+                WindUI:Notify({ Title="Revive", Content="Pilih target dulu!", Duration=2, Icon="alert-circle" })
+                return
+            end
+            local ok, err = pcall(function()
+                local target = nil
+                for _, pl in ipairs(Players:GetPlayers()) do
+                    if pl.Name == reviveTargetName then target = pl; break end
+                end
+                if not target or not target.Character then error("Target tidak valid") end
+                local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
+                if not tHRP then error("HRP target tidak ada") end
+
+                local rh = getHealEvent()
+                if not rh then error("HealEvent tidak ditemukan") end
+
+                for i = 1, 20 do
+                    pcall(function() rh:FireServer(tHRP, true) end)
+                    pcall(function() rh:FireServer(tHRP, false) end)
+                end
+
+                task.delay(0.1, function()
+                    local sk = getSkillCheck()
+                    if sk and target.Character then
+                        for i = 1, 20 do
+                            pcall(function() sk:FireServer("neutral", 0, target.Character) end)
+                        end
+                    end
+                end)
+            end)
+            WindUI:Notify({
+                Title   = "Revive",
+                Content = ok and "Revive dikirim ke "..reviveTargetName or "Gagal: "..tostring(err),
+                Duration = 2, Icon = ok and "heart" or "alert-circle"
+            })
+        end
+    })
+end
+
+-- ══ 7. DEBUG DUMP — Print knock state info ════════════════════
 SurTab:Button({
     Title = "Debug: Dump Character State",
     Desc  = "Print semua attribute, value, dan child di karakter. PAKE SAAT KNOCK!",
     Callback = function()
         local char = LocalPlayer.Character
         if not char then
-            WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
+            WindUI:Notify({Title="Error", Content="Karakter tidak ditemukan!", Duration=2, Icon="alert-circle"})
             return
         end
 
-        WindUI:Notify({Title = "Debug", Content = "Dumping character state... Cek console!", Duration = 3, Icon = "search"})
+        WindUI:Notify({Title="Debug", Content="Dumping character state... Cek console!", Duration=3, Icon="search"})
 
         task.spawn(function()
             local hum = char:FindFirstChildOfClass("Humanoid")
@@ -3629,56 +3712,69 @@ SurTab:Button({
             print("MaxHP: " .. (hum and tostring(hum.MaxHealth) or "nil"))
             print("State: " .. (hum and tostring(hum:GetState()) or "nil"))
 
-            -- Dump semua attributes di HumanoidRootPart
+            -- Dump Status object details
+            print("\n--- Humanoid.Status Object ---")
+            if hum then
+                local st = hum:FindFirstChild("Status")
+                if st then
+                    print("  Status found: " .. st.Name .. " (" .. st.ClassName .. ")")
+                    for _, child in ipairs(st:GetChildren()) do
+                        local val = ""
+                        pcall(function() val = tostring(child.Value) end)
+                        print("    " .. child.Name .. " = " .. val .. " (" .. child.ClassName .. ")")
+                    end
+                    for _, attr in ipairs(st:GetAttributes()) do
+                        print("    Attr: " .. attr .. " = " .. tostring(st:GetAttribute(attr)))
+                    end
+                else
+                    print("  Status: NOT FOUND")
+                end
+            end
+
+            -- Dump HRP_Clone/Hurtbox
+            print("\n--- HRP_Clone / Hurtbox ---")
+            if root then
+                local clone = root:FindFirstChild("HRP_Clone")
+                if clone then
+                    print("  HRP_Clone found: " .. clone.ClassName)
+                    for _, child in ipairs(clone:GetChildren()) do
+                        print("    " .. child.Name .. " (" .. child.ClassName .. ")")
+                    end
+                else
+                    print("  HRP_Clone: NOT FOUND")
+                end
+            end
+
+            -- Dump attributes
             print("\n--- HumanoidRootPart Attributes ---")
             if root then
                 for _, attr in ipairs(root:GetAttributes()) do
-                    print("  HRP Attr: " .. attr)
+                    print("  HRP Attr: " .. attr .. " = " .. tostring(root:GetAttribute(attr)))
                 end
             end
 
-            -- Dump semua attributes di Humanoid
             print("\n--- Humanoid Attributes ---")
             if hum then
                 for _, attr in ipairs(hum:GetAttributes()) do
-                    print("  Hum Attr: " .. attr)
+                    print("  Hum Attr: " .. attr .. " = " .. tostring(hum:GetAttribute(attr)))
                 end
             end
 
-            -- Dump SEMUA children di Character (cari ValueBase/BoolValue/StringValue)
-            print("\n--- Character Children (values & objects) ---")
-            for _, child in ipairs(char:GetChildren()) do
-                if child:IsA("BoolValue") or child:IsA("NumberValue") or child:IsA("StringValue")
-                or child:IsA("IntValue") or child:IsA("ObjectValue") or child:IsA("Attribute") then
-                    print("  " .. child.Name .. " = " .. tostring(child.Value) .. " (" .. child.ClassName .. ")")
-                elseif child:IsA("RemoteEvent") or child:IsA("BindableEvent") or child:IsA("RemoteFunction") then
-                    print("  " .. child.Name .. " (" .. child.ClassName .. ")")
-                elseif not child:IsA("BasePart") and not child:IsA("Humanoid") and not child:IsA("Accessory")
-                and not child:IsA("Shirt") and not child:IsA("Pants") and not child:IsA("ShirtGraphic")
-                and not child:IsA("CharacterMesh") and not child:IsA("Tool") and not child:IsA("Folder") then
-                    print("  " .. child.Name .. " (" .. child.ClassName .. ")")
-                end
-            end
-
-            -- Dump attributes di Character
-            print("\n--- Character Attributes ---")
-            for _, attr in ipairs(char:GetAttributes()) do
-                print("  Char Attr: " .. attr)
-            end
-
-            -- Khusus cari yang mirip "knock/down/injure"
+            -- Search knock-related objects
             print("\n--- KNOCK-RELATED SEARCH ---")
             for _, child in ipairs(char:GetDescendants()) do
                 local name = child.Name:lower()
                 if name:find("knock") or name:find("down") or name:find("injur") or name:find("hurt")
                 or name:find("crawl") or name:find("bleed") or name:find("status") or name:find("state")
-                or name:find("carry") or name:find("hook") or name:find("dead") or name:find("revive") then
+                or name:find("carry") or name:find("hook") or name:find("dead") or name:find("revive")
+                or name:find("crouch") or name:find("recover") or name:find("heal") then
                     local val = ""
                     pcall(function() val = tostring(child.Value) end)
                     print("  >> " .. child:GetFullName() .. " = " .. val .. " (" .. child.ClassName .. ")")
                 end
             end
-            -- Cari attribute juga
+
+            -- Search knock-related attributes
             for _, child in ipairs({char, hum, root}) do
                 if child then
                     for _, attr in ipairs(child:GetAttributes()) do
@@ -3686,7 +3782,7 @@ SurTab:Button({
                         if name:find("knock") or name:find("down") or name:find("injur") or name:find("hurt")
                         or name:find("crawl") or name:find("bleed") or name:find("status") or name:find("state")
                         or name:find("carry") or name:find("hook") or name:find("dead") or name:find("revive")
-                        or name:find("crouch") then
+                        or name:find("crouch") or name:find("recover") then
                             local val = child:GetAttribute(attr)
                             print("  >> ATTR " .. child.Name .. "." .. attr .. " = " .. tostring(val))
                         end
@@ -4268,41 +4364,7 @@ AimTab:Toggle({
     Title       = "Spear Aimbot",
     Description = "Auto-aim kamera dengan kompensasi gravitasi untuk spear Veil",
     Value       = false,
-    Callback    = function(v)
-        VD.SPEAR_Aimbot = v
-        if v then
-            drawSpearFOVCircle(VD.SPEAR_FOV)
-        else
-            removeSpearFOVCircle()
-        end
-    end
-})
-AimTab:Toggle({
-    Title       = "Show Spear FOV Circle",
-    Description = "Tampilkan lingkaran FOV untuk Spear Aimbot",
-    Value       = true,
-    Callback    = function(v)
-        if v and VD.SPEAR_Aimbot then
-            drawSpearFOVCircle(VD.SPEAR_FOV)
-        else
-            removeSpearFOVCircle()
-        end
-    end
-})
-AimTab:Slider({
-    Title    = "Spear FOV (pixel dari tengah layar)",
-    Value    = { Min = 30, Max = 500, Default = 120 },
-    Step     = 10,
-    Callback = function(v)
-        VD.SPEAR_FOV = v
-        if VD.SPEAR_Aimbot then drawSpearFOVCircle(v) end
-    end
-})
-AimTab:Slider({
-    Title    = "Spear Radius (studs)",
-    Value    = { Min = 10, Max = 300, Default = 80 },
-    Step     = 5,
-    Callback = function(v) VD.SPEAR_Radius = v end
+    Callback    = function(v) VD.SPEAR_Aimbot = v end
 })
 AimTab:Slider({
     Title    = "Spear Gravity",
@@ -4798,48 +4860,6 @@ MainTab:Colorpicker({
             buildCrosshair()
         end)
     end
-})
-
--- ============================================================
--- ISI TAB FLING & DESTRUCTION
--- ============================================================
-FlingTab:Section({ Title = "Fling Tools", Icon = "zap" })
-
-FlingTab:Button({
-    Title = "⚡ Fling Killer Terdekat",
-    Desc  = "Lempar killer yang dekat ke luar map",
-    Callback = function()
-        pcall(NEX_FlingNearest)
-        WindUI:Notify({Title = "Fling", Content = "Mengeksekusi Fling ke Killer!", Duration = 2})
-    end,
-})
-
-FlingTab:Button({
-    Title = "💥 Fling Semua Player",
-    Desc  = "Lempar semua orang di server",
-    Callback = function()
-        pcall(NEX_FlingAll)
-    end,
-})
-
-FlingTab:Section({ Title = "Map Destruction (Killer Mode)", Icon = "tool" })
-
-FlingTab:Button({
-    Title = "🔨 Break All Generator",
-    Desc  = "Hancurkan semua generator instan",
-    Callback = function()
-        pcall(NEX_FullGenBreak)
-        WindUI:Notify({Title = "Destroy", Content = "Semua Generator dihancurkan!", Duration = 2})
-    end,
-})
-
-FlingTab:Button({
-    Title = "🪵 Drop All Pallet",
-    Desc  = "Jatuhkan semua pallet di map sekaligus",
-    Callback = function()
-        pcall(NEX_DestroyAllPallets)
-        WindUI:Notify({Title = "Destroy", Content = "Semua Pallet dijatuhkan!", Duration = 2})
-    end,
 })
 
 -- ============================================================
