@@ -1,5 +1,5 @@
 -- ======================
-local version = "1.3.0"
+local version = "2.1.0"
 -- ======================
 
 repeat task.wait() until game:IsLoaded()
@@ -2947,26 +2947,67 @@ local autoSelfReviveEnabled = false
 local function sendSelfHeal()
     local char = LocalPlayer.Character
     if not char then return end
-    -- Step 1: Re-enable collision (WAJIB saat revive dari knock!)
-    pcall(function()
-        ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer()
-    end)
-    -- Step 2: Hapus state injured/crouching (untuk heal partial damage)
-    pcall(function()
-        ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false)
-    end)
-    -- Step 3: Stop animasi sekarat
-    pcall(function()
-        ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
-    end)
-    -- Step 4: Reset knock state (server restore HP + state)
-    pcall(function()
-        ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
-    end)
-    -- Step 5: Auto-pass skill check
-    pcall(function()
-        ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char)
-    end)
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local root = char:FindFirstChild("HumanoidRootPart")
+
+    -- ═══ 1. SET HP LANGSUNG (works dari Explorer) ═══
+    if hum then
+        pcall(function() hum.Health = hum.MaxHealth end)
+    end
+
+    -- ═══ 2. FIX KNOCK STATE (client-side) ═══
+    if hum then
+        pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
+        pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, false) end)
+        pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false) end)
+        pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+    end
+
+    -- ═══ 3. HAPUS SEMUA ATTRIBUTE YANG MUNGKIN TRACK KNOCK ═══
+    if root then
+        pcall(function() root:SetAttribute("Crouchingserver", false) end)
+        pcall(function() root:SetAttribute("Knocked", false) end)
+        pcall(function() root:SetAttribute("Downed", false) end)
+        pcall(function() root:SetAttribute("Injured", false) end)
+        pcall(function() root:SetAttribute("IsDown", false) end)
+    end
+    if hum then
+        pcall(function() hum:SetAttribute("Knocked", false) end)
+        pcall(function() hum:SetAttribute("Downed", false) end)
+        pcall(function() hum:SetAttribute("Injured", false) end)
+        pcall(function() hum:SetAttribute("IsDown", false) end)
+    end
+    -- Hapus ValueBase objects yang mungkin track knock
+    for _, name in ipairs({"Knocked", "Downed", "Injured", "IsDown", "Status", "KnockValue", "DownValue"}) do
+        pcall(function()
+            local v = char:FindFirstChild(name)
+            if v then v:Destroy() end
+        end)
+    end
+
+    -- ═══ 4. REMOTE CALLS — coba reset SERVER-SIDE knock state ═══
+    -- Collision: re-enable setelah knock
+    pcall(function() ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer() end)
+    -- ChangeAttribute: hapus berbagai attribute name yang mungkin
+    pcall(function() ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false) end)
+    pcall(function() ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Knocked", false) end)
+    pcall(function() ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Downed", false) end)
+    pcall(function() ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Injured", false) end)
+    -- Stop emote sekarat
+    pcall(function() ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote") end)
+    -- Cancel action (mungkin cancel knock state)
+    pcall(function() ReplicatedStorage.Remotes.Mechanics.cancelaction:FireServer() end)
+    -- Healing.Reset: reset knock state di server
+    pcall(function() ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer) end)
+    -- Skill check result (auto-pass)
+    pcall(function() ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char) end)
+    -- HealEvent: coba self-revive
+    if root then
+        pcall(function() ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(root, true) end)
+    end
+    -- PlayerActionEvent: coba kirim "Revived" action
+    pcall(function() ReplicatedStorage.Remotes.Game.PlayerActionEvent:FireServer("Revived") end)
+    pcall(function() ReplicatedStorage.Remotes.Game.PlayerActionEvent:FireServer("SelfRevive") end)
 end
 
 -- Cek apakah player dalam state KNOCK (HP < 50 atau humanoid state knocked)
@@ -3412,106 +3453,129 @@ SurTab:Button({
 SurTab:Section({ Title = "Instant Heal & Revive", Icon = "heart" })
 
 SurTab:Button({
-    Title = "Instant Full Heal (Self)",
-    Desc  = "Bangun dari knock + HP full. Gunakan saat knock (HP < 50). TIDAK kebal!",
+    Title = "Instant Full Heal + Anti-Knock",
+    Desc  = "Set HP 100 + Fix knock state + Hapus semua knock attribute + Remote burst. Cek console!",
     Callback = function()
         if not LocalPlayer.Character then
             WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
             return
         end
 
-        -- Kirim SEMUA remote yang diperlukan (cover kedua skenario)
-        -- JANGAN manipulasi client-side, biar server yang handle
+        sendSelfHeal()
 
-        -- Step 1: Re-enable collision (WAJIB saat revive dari knock!)
-        pcall(function()
-            ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer()
-        end)
+        -- Delayed burst 2x lagi
+        task.delay(0.5, function() sendSelfHeal() end)
+        task.delay(1.0, function() sendSelfHeal() end)
 
-        -- Step 2: Hapus state injured/crouching
-        pcall(function()
-            ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false)
-        end)
-
-        -- Step 3: Stop animasi sekarat
-        pcall(function()
-            ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
-        end)
-
-        -- Step 4: Reset knock state (server restore HP + state)
-        pcall(function()
-            ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
-        end)
-
-        -- Step 5: Auto-pass skill check
-        pcall(function()
-            ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, LocalPlayer.Character)
-        end)
-
-        -- Delayed burst: kirim lagi 2x pastikan server accept
-        task.delay(0.3, function()
-            pcall(function()
-                ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer()
-                ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false)
-                ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
-                ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
-                ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, LocalPlayer.Character)
-            end)
-        end)
-        task.delay(0.6, function()
-            pcall(function()
-                ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer()
-                ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false)
-                ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
-                ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
-                ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, LocalPlayer.Character)
-            end)
-        end)
-
-        WindUI:Notify({Title = "Heal", Content = "Full Heal dikirim! (EnableCollision + ChangeAttribute + Reset + StopEmote)", Duration = 2, Icon = "heart"})
+        WindUI:Notify({Title = "Heal", Content = "Full Heal + Anti-Knock 3x burst! Cek console buat debug info.", Duration = 3, Icon = "heart"})
     end
 })
 
--- ════ HEAL PARTIAL DAMAGE (HP 50-99, belum knock) ════
--- ChangeAttribute("Crouchingserver", false) hapus state injured
--- Healing.Reset mungkin ignored kalau belum knocked
--- Tapi kita coba kirim semua remote termasuk EnableCollision
 SurTab:Button({
-    Title = "Heal Partial Damage (HP 50-99)",
-    Desc  = "Coba heal saat HP berkurang tapi belum knock. BELUM PASTI WORK!",
+    Title = "Heal Partial Damage",
+    Desc  = "Set HP = MaxHealth. Untuk damage biasa (belum knock).",
     Callback = function()
         if not LocalPlayer.Character then
             WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
             return
         end
 
-        -- Coba kirim semua remote untuk partial damage
-        pcall(function()
-            ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer()
-        end)
-        pcall(function()
-            ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false)
-        end)
-        pcall(function()
-            ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote")
-        end)
-        pcall(function()
-            ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
-        end)
-        pcall(function()
-            ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, LocalPlayer.Character)
-        end)
+        sendSelfHeal()
 
-        -- Burst kedua
-        task.delay(0.3, function()
-            pcall(function()
-                ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer()
-                ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false)
-                ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer)
-            end)
-        end)
+        WindUI:Notify({Title = "Heal", Content = "Heal dikirim! HP langsung MaxHealth.", Duration = 2, Icon = "heart"})
+    end
+})
 
-        WindUI:Notify({Title = "Heal", Content = "Heal partial dikirim! Cek HP apakah naik. Kalau tidak naik, tidak ada remote self-heal untuk partial damage.", Duration = 4, Icon = "heart"})
+-- ════ DEBUG: DUMP CHARACTER STATE SAAT KNOCK ════
+-- INI PENTING! Biar kita tahu apa yang track knock status di character
+SurTab:Button({
+    Title = "Debug: Dump Character State",
+    Desc  = "Print semua attribute, value, dan child di karakter. PAKE SAAT KNOCK!",
+    Callback = function()
+        local char = LocalPlayer.Character
+        if not char then
+            WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
+            return
+        end
+
+        WindUI:Notify({Title = "Debug", Content = "Dumping character state... Cek console!", Duration = 3, Icon = "search"})
+
+        task.spawn(function()
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            local root = char:FindFirstChild("HumanoidRootPart")
+
+            print("===== CHARACTER STATE DUMP =====")
+            print("HP: " .. (hum and tostring(hum.Health) or "nil"))
+            print("MaxHP: " .. (hum and tostring(hum.MaxHealth) or "nil"))
+            print("State: " .. (hum and tostring(hum:GetState()) or "nil"))
+
+            -- Dump semua attributes di HumanoidRootPart
+            print("\n--- HumanoidRootPart Attributes ---")
+            if root then
+                for _, attr in ipairs(root:GetAttributes()) do
+                    print("  HRP Attr: " .. attr)
+                end
+            end
+
+            -- Dump semua attributes di Humanoid
+            print("\n--- Humanoid Attributes ---")
+            if hum then
+                for _, attr in ipairs(hum:GetAttributes()) do
+                    print("  Hum Attr: " .. attr)
+                end
+            end
+
+            -- Dump SEMUA children di Character (cari ValueBase/BoolValue/StringValue)
+            print("\n--- Character Children (values & objects) ---")
+            for _, child in ipairs(char:GetChildren()) do
+                if child:IsA("BoolValue") or child:IsA("NumberValue") or child:IsA("StringValue")
+                or child:IsA("IntValue") or child:IsA("ObjectValue") or child:IsA("Attribute") then
+                    print("  " .. child.Name .. " = " .. tostring(child.Value) .. " (" .. child.ClassName .. ")")
+                elseif child:IsA("RemoteEvent") or child:IsA("BindableEvent") or child:IsA("RemoteFunction") then
+                    print("  " .. child.Name .. " (" .. child.ClassName .. ")")
+                elseif not child:IsA("BasePart") and not child:IsA("Humanoid") and not child:IsA("Accessory")
+                and not child:IsA("Shirt") and not child:IsA("Pants") and not child:IsA("ShirtGraphic")
+                and not child:IsA("CharacterMesh") and not child:IsA("Tool") and not child:IsA("Folder") then
+                    print("  " .. child.Name .. " (" .. child.ClassName .. ")")
+                end
+            end
+
+            -- Dump attributes di Character
+            print("\n--- Character Attributes ---")
+            for _, attr in ipairs(char:GetAttributes()) do
+                print("  Char Attr: " .. attr)
+            end
+
+            -- Khusus cari yang mirip "knock/down/injure"
+            print("\n--- KNOCK-RELATED SEARCH ---")
+            for _, child in ipairs(char:GetDescendants()) do
+                local name = child.Name:lower()
+                if name:find("knock") or name:find("down") or name:find("injur") or name:find("hurt")
+                or name:find("crawl") or name:find("bleed") or name:find("status") or name:find("state")
+                or name:find("carry") or name:find("hook") or name:find("dead") or name:find("revive") then
+                    local val = ""
+                    pcall(function() val = tostring(child.Value) end)
+                    print("  >> " .. child:GetFullName() .. " = " .. val .. " (" .. child.ClassName .. ")")
+                end
+            end
+            -- Cari attribute juga
+            for _, child in ipairs({char, hum, root}) do
+                if child then
+                    for _, attr in ipairs(child:GetAttributes()) do
+                        local name = attr:lower()
+                        if name:find("knock") or name:find("down") or name:find("injur") or name:find("hurt")
+                        or name:find("crawl") or name:find("bleed") or name:find("status") or name:find("state")
+                        or name:find("carry") or name:find("hook") or name:find("dead") or name:find("revive")
+                        or name:find("crouch") then
+                            local val = child:GetAttribute(attr)
+                            print("  >> ATTR " .. child.Name .. "." .. attr .. " = " .. tostring(val))
+                        end
+                    end
+                end
+            end
+
+            print("===== END DUMP =====")
+        end)
     end
 })
 
