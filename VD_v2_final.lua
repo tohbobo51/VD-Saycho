@@ -40,10 +40,7 @@ local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 loadstring(game:HttpGet("https://pastefy.app/Wd15jL6J/raw", true))()
 -- ====================== WINDOW ======================
-local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
-
-local player = Players.LocalPlayer
 
 WindUI:AddTheme({
     Name = "Light",
@@ -264,38 +261,7 @@ local ShowDistance = true
 local ShowHP = true
 local ShowHighlight = true
 
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-local RunService = game:GetService("RunService")
 local espObjects = {}
-
--- ============================================================
--- CONFIG TABLE
--- ============================================================
-local Config = {
-    ESP = {
-        ShowDistance        = true,
-        MaxDistance         = 500,
-        ShowOnlyClosestHook = false,
-    },
-    AutoFeatures = {
-        AutoAttack  = false,
-        AttackRange = 10,
-    },
-    Teleportation = {
-        SafeTeleport   = true,
-        TeleportOffset = 3,
-    },
-    Performance = {
-        UpdateRate           = 0.5,
-        UseDistanceCulling   = true,
-        MaxESPObjects        = 100,
-        DisableParticles     = false,
-        LowerGraphics        = false,
-        DisableShadows       = false,
-        ReduceRenderDistance = false,
-    },
-}
 
 -- ============================================================
 -- CONFIG TABLE v1.2 — central settings, dipakai semua fitur
@@ -2180,9 +2146,6 @@ killerTab:Toggle({
 
 killerTab:Section({ Title = "Feature Cheat", Icon = "bug" })
 
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-
 local noFlashlightEnabled = false
 
 -- Toggle ของคุณ (ถ้ามี)
@@ -2217,8 +2180,6 @@ task.spawn(function()
     end
 end)
 
-local Players = game:GetService("Players")
-local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
 
 -- ปุ่มใน Killer Tab สำหรับ Reset กล้อง
@@ -2226,16 +2187,16 @@ killerTab:Button({
     Title = "Fix Cam (3rd Person Camera)", 
     Callback = function()
         -- รีเซ็ตกล้อง
-        local character = player.Character or player.CharacterAdded:Wait()
+        local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
         local humanoid = character:FindFirstChildOfClass("Humanoid")
 
         if humanoid then
             camera.CameraType = Enum.CameraType.Custom
             camera.CameraSubject = humanoid
 
-            player.CameraMinZoomDistance = 0.5
-            player.CameraMaxZoomDistance = 400
-            player.CameraMode = Enum.CameraMode.Classic
+            LocalPlayer.CameraMinZoomDistance = 0.5
+            LocalPlayer.CameraMaxZoomDistance = 400
+            LocalPlayer.CameraMode = Enum.CameraMode.Classic
 
             -- เผื่อโดน Anchor หัวไว้
             local head = character:FindFirstChild("Head")
@@ -2247,7 +2208,6 @@ killerTab:Button({
 })
 
 -- ====================== VISUAL ======================
-local Lighting = game:GetService("Lighting")
 
 local fullBrightEnabled = false
 local noFogEnabled = false
