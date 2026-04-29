@@ -1,5 +1,5 @@
 -- ======================
-local version = "2.1.0"
+local version = "2.2.0"
 -- ======================
 
 repeat task.wait() until game:IsLoaded()
@@ -2950,12 +2950,32 @@ local function sendSelfHeal()
     local hum = char:FindFirstChildOfClass("Humanoid")
     local root = char:FindFirstChild("HumanoidRootPart")
 
-    -- ═══ 1. SET HP LANGSUNG (works dari Explorer) ═══
+    -- ═══ 1. DESTROY Status OBJECT di Humanoid (ini yang track knock!) ═══
     if hum then
-        pcall(function() hum.Health = hum.MaxHealth end)
+        pcall(function()
+            local st = hum:FindFirstChild("Status")
+            if st then
+                print("[HEAL] Destroying Humanoid.Status: " .. st.Name .. " (" .. st.ClassName .. ")")
+                st:Destroy()
+            end
+        end)
     end
 
-    -- ═══ 2. FIX KNOCK STATE (client-side) ═══
+    -- ═══ 2. DESTROY Hurtbox (biar killer ga bisa carry/hook) ═══
+    if root then
+        pcall(function()
+            local clone = root:FindFirstChild("HRP_Clone")
+            if clone then
+                local hb = clone:FindFirstChild("Hurtbox")
+                if hb then
+                    print("[HEAL] Destroying Hurtbox")
+                    hb:Destroy()
+                end
+            end
+        end)
+    end
+
+    -- ═══ 3. FIX KNOCK STATE (client-side) ═══
     if hum then
         pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
         pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, false) end)
@@ -2963,51 +2983,90 @@ local function sendSelfHeal()
         pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
     end
 
-    -- ═══ 3. HAPUS SEMUA ATTRIBUTE YANG MUNGKIN TRACK KNOCK ═══
+    -- ═══ 4. HAPUS ATTRIBUTE KNOCK ═══
     if root then
         pcall(function() root:SetAttribute("Crouchingserver", false) end)
-        pcall(function() root:SetAttribute("Knocked", false) end)
-        pcall(function() root:SetAttribute("Downed", false) end)
-        pcall(function() root:SetAttribute("Injured", false) end)
-        pcall(function() root:SetAttribute("IsDown", false) end)
-    end
-    if hum then
-        pcall(function() hum:SetAttribute("Knocked", false) end)
-        pcall(function() hum:SetAttribute("Downed", false) end)
-        pcall(function() hum:SetAttribute("Injured", false) end)
-        pcall(function() hum:SetAttribute("IsDown", false) end)
-    end
-    -- Hapus ValueBase objects yang mungkin track knock
-    for _, name in ipairs({"Knocked", "Downed", "Injured", "IsDown", "Status", "KnockValue", "DownValue"}) do
-        pcall(function()
-            local v = char:FindFirstChild(name)
-            if v then v:Destroy() end
-        end)
     end
 
-    -- ═══ 4. REMOTE CALLS — coba reset SERVER-SIDE knock state ═══
-    -- Collision: re-enable setelah knock
+    -- ═══ 5. REMOTE CALLS ═══
     pcall(function() ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer() end)
-    -- ChangeAttribute: hapus berbagai attribute name yang mungkin
     pcall(function() ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false) end)
-    pcall(function() ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Knocked", false) end)
-    pcall(function() ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Downed", false) end)
-    pcall(function() ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Injured", false) end)
-    -- Stop emote sekarat
     pcall(function() ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote") end)
-    -- Cancel action (mungkin cancel knock state)
-    pcall(function() ReplicatedStorage.Remotes.Mechanics.cancelaction:FireServer() end)
-    -- Healing.Reset: reset knock state di server
     pcall(function() ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer) end)
-    -- Skill check result (auto-pass)
-    pcall(function() ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char) end)
-    -- HealEvent: coba self-revive
-    if root then
-        pcall(function() ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(root, true) end)
-    end
-    -- PlayerActionEvent: coba kirim "Revived" action
-    pcall(function() ReplicatedStorage.Remotes.Game.PlayerActionEvent:FireServer("Revived") end)
-    pcall(function() ReplicatedStorage.Remotes.Game.PlayerActionEvent:FireServer("SelfRevive") end)
+    pcall(function() ReplicatedStorage.Remotes.Mechanics.cancelaction:FireServer() end)
+end
+
+-- ═══ FULL HEAL PROCESS (simulasi heal lengkap dengan skill check berulang) ═══
+-- Proses heal VD: HealEvent → SkillCheckEvent → [pass skill check] → ulang sampai full → Reset
+-- Kita auto-pass skill check berkali-kali sampai proses heal selesai
+local function sendFullHealProcess()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local root = char:FindFirstChild("HumanoidRootPart")
+
+    task.spawn(function()
+        -- Step 1: Destroy Status & Hurtbox dulu
+        if hum then
+            pcall(function()
+                local st = hum:FindFirstChild("Status")
+                if st then st:Destroy() end
+            end)
+        end
+        if root then
+            pcall(function()
+                local clone = root:FindFirstChild("HRP_Clone")
+                if clone then
+                    local hb = clone:FindFirstChild("Hurtbox")
+                    if hb then hb:Destroy() end
+                end
+            end)
+        end
+
+        -- Step 2: Mulai proses heal
+        pcall(function() ReplicatedStorage.Remotes.Healing.Stophealing:FireServer() end)
+        pcall(function() ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer() end)
+        pcall(function() ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false) end)
+        pcall(function() ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote") end)
+
+        task.wait(0.2)
+
+        -- Step 3: HealEvent buat mulai revive
+        if root then
+            pcall(function() ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(root, true) end)
+        end
+
+        task.wait(0.3)
+
+        -- Step 4: Auto-pass skill check BERULANG (simulasi orang lain heal kita)
+        -- Game butuh beberapa skill check pass sampai heal full
+        for i = 1, 15 do
+            pcall(function() ReplicatedStorage.Remotes.Healing.SkillCheckEvent:FireServer() end)
+            task.wait(0.1)
+            pcall(function() ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("perfect", 100, char) end)
+            task.wait(0.1)
+            print("[HEAL] Skill check pass #" .. i)
+        end
+
+        task.wait(0.3)
+
+        -- Step 5: Reset knock state
+        pcall(function() ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer) end)
+
+        -- Step 6: Fix client state
+        if hum then
+            pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
+            pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, false) end)
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+        end
+
+        -- Step 7: Burst lagi semua remote
+        pcall(function() ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer() end)
+        pcall(function() ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false) end)
+        pcall(function() ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer) end)
+
+        print("[HEAL] Full heal process selesai!")
+    end)
 end
 
 -- Cek apakah player dalam state KNOCK (HP < 50 atau humanoid state knocked)
@@ -3454,7 +3513,7 @@ SurTab:Section({ Title = "Instant Heal & Revive", Icon = "heart" })
 
 SurTab:Button({
     Title = "Instant Full Heal + Anti-Knock",
-    Desc  = "Set HP 100 + Fix knock state + Hapus semua knock attribute + Remote burst. Cek console!",
+    Desc  = "Destroy Status + Hurtbox + Fix state + Remote burst. Cek console!",
     Callback = function()
         if not LocalPlayer.Character then
             WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
@@ -3463,26 +3522,87 @@ SurTab:Button({
 
         sendSelfHeal()
 
-        -- Delayed burst 2x lagi
+        -- Burst lagi
         task.delay(0.5, function() sendSelfHeal() end)
-        task.delay(1.0, function() sendSelfHeal() end)
 
-        WindUI:Notify({Title = "Heal", Content = "Full Heal + Anti-Knock 3x burst! Cek console buat debug info.", Duration = 3, Icon = "heart"})
+        WindUI:Notify({Title = "Heal", Content = "Status destroyed + Hurtbox destroyed + Remote burst!", Duration = 3, Icon = "heart"})
     end
 })
 
 SurTab:Button({
-    Title = "Heal Partial Damage",
-    Desc  = "Set HP = MaxHealth. Untuk damage biasa (belum knock).",
+    Title = "Full Heal Process (15x Skill Check)",
+    Desc  = "Simulasi heal lengkap: HealEvent + 15x auto-pass skill check + Reset. Untuk knock!",
     Callback = function()
         if not LocalPlayer.Character then
             WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
             return
         end
 
-        sendSelfHeal()
+        sendFullHealProcess()
 
-        WindUI:Notify({Title = "Heal", Content = "Heal dikirim! HP langsung MaxHealth.", Duration = 2, Icon = "heart"})
+        WindUI:Notify({Title = "Heal", Content = "Full heal process mulai! 15x skill check auto-pass. Cek console!", Duration = 5, Icon = "heart"})
+    end
+})
+
+SurTab:Button({
+    Title = "Destroy Hurtbox Only",
+    Desc  = "Hapus Hurtbox biar killer ga bisa carry/hook kamu saat knock.",
+    Callback = function()
+        local char = LocalPlayer.Character
+        if not char then return end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if root then
+            pcall(function()
+                local clone = root:FindFirstChild("HRP_Clone")
+                if clone then
+                    local hb = clone:FindFirstChild("Hurtbox")
+                    if hb then
+                        hb:Destroy()
+                        WindUI:Notify({Title = "Hurtbox", Content = "Hurtbox destroyed! Killer ga bisa interaksi.", Duration = 3, Icon = "shield"})
+                    else
+                        WindUI:Notify({Title = "Hurtbox", Content = "Hurtbox tidak ditemukan.", Duration = 2, Icon = "alert-circle"})
+                    end
+                else
+                    WindUI:Notify({Title = "Hurtbox", Content = "HRP_Clone tidak ditemukan.", Duration = 2, Icon = "alert-circle"})
+                end
+            end)
+        end
+    end
+})
+
+SurTab:Button({
+    Title = "Destroy Status Object",
+    Desc  = "Hapus Humanoid.Status yang track knock state. Cek console!",
+    Callback = function()
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            pcall(function()
+                local st = hum:FindFirstChild("Status")
+                if st then
+                    print("[HEAL] Status class: " .. st.ClassName)
+                    -- Print value sebelum destroy
+                    if st:IsA("StringValue") then
+                        print("[HEAL] Status value: " .. st.Value)
+                    elseif st:IsA("BoolValue") then
+                        print("[HEAL] Status value: " .. tostring(st.Value))
+                    elseif st:IsA("NumberValue") then
+                        print("[HEAL] Status value: " .. tostring(st.Value))
+                    elseif st:IsA("ObjectValue") then
+                        print("[HEAL] Status value: " .. tostring(st.Value))
+                    end
+                    -- Print children
+                    for _, child in ipairs(st:GetChildren()) do
+                        print("[HEAL] Status child: " .. child.Name .. " (" .. child.ClassName .. ")")
+                    end
+                    st:Destroy()
+                    WindUI:Notify({Title = "Status", Content = "Status destroyed! Cek console buat info.", Duration = 3, Icon = "shield"})
+                else
+                    WindUI:Notify({Title = "Status", Content = "Status object tidak ditemukan.", Duration = 2, Icon = "alert-circle"})
+                end
+            end)
+        end
     end
 })
 
