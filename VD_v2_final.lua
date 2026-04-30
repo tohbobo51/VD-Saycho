@@ -40,10 +40,7 @@ local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 pcall(function() loadstring(game:HttpGet("https://pastefy.app/Wd15jL6J/raw", true))() end)
 -- ====================== WINDOW ======================
-local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
-
-local player = Players.LocalPlayer
+-- Duplicate locals removed (already declared at top of file)
 
 WindUI:AddTheme({
     Name = "Light",
@@ -418,7 +415,6 @@ end
 
 -- ── Auto Parry (working — fires Remotes.Items.ParryingDagger.parry) ──
 local LastParryTime  = 0
-local LastDebugParry = 0
 local function NEX_AutoParry()
     if not VD.AUTO_Parry then return end
     if GetRole() ~= "Survivor" then return end
@@ -1069,30 +1065,6 @@ local function UpdateSpearAim()
 end
 
 -- FOV Circle
-local fovCircle = nil
-local fovCircleConn = nil
-local function drawFOVCircle(radius)
-    if fovCircleConn then fovCircleConn:Disconnect(); fovCircleConn = nil end
-    if fovCircle then pcall(function() fovCircle:Remove() end); fovCircle = nil end
-    if not radius or radius <= 0 or not DrawingAvailable then return end
-    pcall(function()
-        fovCircle           = Drawing.new("Circle")
-        fovCircle.Radius    = radius
-        fovCircle.Color     = Color3.fromRGB(255, 200, 50)
-        fovCircle.Thickness = 1.5
-        fovCircle.Filled    = false
-        fovCircle.NumSides  = 64
-        local vp = workspace.CurrentCamera.ViewportSize
-        fovCircle.Position  = Vector2.new(vp.X/2, vp.Y/2)
-        fovCircle.Visible   = true
-        fovCircleConn = game:GetService("RunService").RenderStepped:Connect(function()
-            if not fovCircle then return end
-            local vp2 = workspace.CurrentCamera.ViewportSize
-            pcall(function() fovCircle.Position = Vector2.new(vp2.X/2, vp2.Y/2) end)
-        end)
-    end)
-end
-
 -- RMB input for aimbot
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
@@ -1328,38 +1300,7 @@ local ShowDistance = true
 local ShowHP = true
 local ShowHighlight = true
 
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-local RunService = game:GetService("RunService")
 local espObjects = {}
-
--- ============================================================
--- CONFIG TABLE
--- ============================================================
-local Config = {
-    ESP = {
-        ShowDistance        = true,
-        MaxDistance         = 500,
-        ShowOnlyClosestHook = false,
-    },
-    AutoFeatures = {
-        AutoAttack  = false,
-        AttackRange = 10,
-    },
-    Teleportation = {
-        SafeTeleport   = true,
-        TeleportOffset = 3,
-    },
-    Performance = {
-        UpdateRate           = 0.5,
-        UseDistanceCulling   = true,
-        MaxESPObjects        = 100,
-        DisableParticles     = false,
-        LowerGraphics        = false,
-        DisableShadows       = false,
-        ReduceRenderDistance = false,
-    },
-}
 
 -- ============================================================
 -- CONFIG TABLE v1.2 — central settings, dipakai semua fitur
@@ -2124,7 +2065,7 @@ local function updateESP(dt)
                     if mdl then removeESP(mdl) end
                 end
 
-            elseif obj.Name == "Palletwrong" then
+            elseif obj.Name == "Pallet" then
                 if espPallet then
                     createESP(obj, COLOR_PALLET)
                 else
@@ -3113,6 +3054,7 @@ SurTab:Button({
                     until BasePart.Velocity.Magnitude > 500 or BasePart.Parent ~= TargetPlayer.Character or TargetPlayer.Parent ~= Players or THumanoid.Sit or Humanoid.Health <= 0 or tick() > Time + TimeToWait
                 end
 
+                getgenv().FPDH = workspace.FallenPartsDestroyHeight
                 workspace.FallenPartsDestroyHeight = 0/0
 
                 local BV = Instance.new("BodyVelocity")
@@ -3146,7 +3088,7 @@ SurTab:Button({
                 repeat
                     RootPart.CFrame = getgenv().OldPos * CFrame.new(0, 0.5, 0)
                     Character:SetPrimaryPartCFrame(getgenv().OldPos * CFrame.new(0, 0.5, 0))
-                    Humanoid:ChangeState("GettingUp")
+                    Humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
                     for _, x in ipairs(Character:GetChildren()) do
                         if x:IsA("BasePart") then
                             x.Velocity, x.RotVelocity = Vector3.new(), Vector3.new()
@@ -3161,7 +3103,7 @@ SurTab:Button({
             end
         end
 
-        if not Welcome then Message("PolleserHub | FLING", "THANK FOR USING", 6) end
+        if not getgenv().Welcome then Message("PolleserHub | FLING", "THANK FOR USING", 6) end
         getgenv().Welcome = true
 
         if AllBool then
@@ -4124,7 +4066,7 @@ killerTab:Toggle({
     end
 })
 
-killerTab:Toggle({Title="Anti Parry (Soon)", Value=false, Callback=function(v) noFlashlightEnabled=v end})
+killerTab:Toggle({Title="Anti Parry (Soon)", Value=false, Callback=function(v) end})
 
 killerTab:Section({ Title = "Feature No-Cooldown", Icon = "crown" })
 
@@ -4185,9 +4127,6 @@ killerTab:Toggle({
 
 killerTab:Section({ Title = "Feature Cheat", Icon = "bug" })
 
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-
 local noFlashlightEnabled = false
 
 -- Toggle ของคุณ (ถ้ามี)
@@ -4222,11 +4161,9 @@ task.spawn(function()
     end
 end)
 
-local Players = game:GetService("Players")
-local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
 
--- ปุ่มใน Killer Tab สำหรับ Reset กล้อง
+-- Fix Cam button
 killerTab:Button({ 
     Title = "Fix Cam (3rd Person Camera)", 
     Callback = function()
@@ -4293,7 +4230,7 @@ MainTab:Button({
             else
                 WindUI:Notify({
                     Title = "Vault Error",
-                    Description = "Tidak ada jendela di dekatmu!",
+                    Content = "Tidak ada jendela di dekatmu!",
                     Duration = 3
                 })
             end
@@ -4353,6 +4290,7 @@ MainTab:Toggle({
 -- ── Feature Visual ───────────────────────────────────────────────
 
 -- Full Bright
+local fullBrightEnabled = false
 MainTab:Toggle({
     Title = "Full Bright",
     Value = false,
@@ -4382,6 +4320,7 @@ MainTab:Toggle({
 })
 
 -- No Fog
+local noFogEnabled = false
 MainTab:Toggle({
     Title = "No Fog",
     Value = false,
@@ -4757,7 +4696,7 @@ SilentTab:Slider({
     Callback = function(v) Config.SilentAim.Range = v end
 })
 
-Info = InfoTab
+local Info = InfoTab
 
 -- ============================================================
 -- QUICK PANEL  — 3 tombol floating TERPISAH, masing-masing
