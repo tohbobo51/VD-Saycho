@@ -8,7 +8,7 @@ repeat task.wait() until game:IsLoaded()
 if setfpscap then
     setfpscap(1000000)
     game:GetService("StarterGui"):SetCore("SendNotification", {
-        Title = "dsc.gg/polleserhub",
+        Title = "Holic",
         Text = "FPS Unlocked!",
         Duration = 2,
         Button1 = "Okay"
@@ -16,7 +16,7 @@ if setfpscap then
     warn("FPS Unlocked!")
 else
     game:GetService("StarterGui"):SetCore("SendNotification", {
-        Title = "dsc.gg/polleserhub",
+        Title = "Holic",
         Text = "Your exploit does not support setfpscap.",
         Duration = 2,
         Button1 = "Okay"
@@ -127,10 +127,10 @@ if not getgenv().TransparencyEnabled then
 end
 
 local Window = WindUI:CreateWindow({
-    Title = "Polleser Hub",
+    Title = "Holic",
     Icon = "rbxassetid://99240933011775", 
-    Author = "Violence District",
-    Folder = "PolleserHub",
+    Author = "Henn",
+    Folder = "Holic",
     Size = UDim2.fromOffset(500, 350),
     Transparent = getgenv().TransparencyEnabled,
     Theme = "Dark",
@@ -246,7 +246,7 @@ pcall(function()
 end)
 
 Window:EditOpenButton({
-    Title = "Polleser Hub",
+    Title = "Holic",
     Icon = "rbxassetid://99240933011775",
     CornerRadius = UDim.new(0, 6),
     StrokeThickness = 2,
@@ -3161,7 +3161,7 @@ SurTab:Button({
                 workspace.FallenPartsDestroyHeight = 0/0
 
                 local BV = Instance.new("BodyVelocity")
-                BV.Name = "PolleserHub-YES"
+                BV.Name = "Holic-YES"
                 BV.Parent = RootPart
                 BV.Velocity = Vector3.new(9e9, 9e9, 9e9)
                 BV.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
@@ -3206,7 +3206,7 @@ SurTab:Button({
             end
         end
 
-        if not Welcome then Message("PolleserHub | FLING", "THANK FOR USING", 6) end
+        if not Welcome then Message("Holic | FLING", "THANK FOR USING", 6) end
         getgenv().Welcome = true
 
         if AllBool then
@@ -3244,7 +3244,6 @@ SurTab:Section({ Title = "Vault / Window", Icon = "wind" })
 
 -- ─── Vault state & remotes ───────────────────────────────────
 local fastVaultEnabled    = false
-local instantVaultEnabled = false
 local vaultTouchConns     = {}
 local vaultMapConn        = nil
 local remWindowCache      = nil
@@ -3284,7 +3283,7 @@ end
 
 local function hookOneVaultTrigger(trigger)
     local conn = trigger.Touched:Connect(function(part)
-        if not (fastVaultEnabled or instantVaultEnabled) then return end
+        if not fastVaultEnabled then return end
         local char = LocalPlayer.Character
         if not char then return end
         -- cek apakah part yang touch adalah bagian karakter kita
@@ -3299,17 +3298,13 @@ local function hookOneVaultTrigger(trigger)
         local rems = getWindowRemotes()
         if not rems then return end
 
-        if instantVaultEnabled then
-            pcall(function()
-                rems.vaultEvent:FireServer(trigger, true)
-                task.wait(0.03)
-                rems.vaultComplete:FireServer(trigger, false)
-            end)
-        else -- fastVaultEnabled
-            pcall(function()
-                rems.fastVault:FireServer(LocalPlayer)
-            end)
-        end
+        -- Fast Vault: kirim semua sinyal sekaligus untuk vault tercepat
+        pcall(function()
+            rems.fastVault:FireServer(LocalPlayer)
+            rems.vaultEvent:FireServer(trigger, true)
+            task.wait(0.03)
+            rems.vaultComplete:FireServer(trigger, false)
+        end)
     end)
     table.insert(vaultTouchConns, conn)
 end
@@ -3324,8 +3319,7 @@ local function startVaultHook()
     if map then
         if vaultMapConn then vaultMapConn:Disconnect() end
         vaultMapConn = map.DescendantAdded:Connect(function(v)
-            if v.Name == "VaultTrigger" and v:IsA("BasePart")
-                and (fastVaultEnabled or instantVaultEnabled) then
+            if v.Name == "VaultTrigger" and v:IsA("BasePart") and fastVaultEnabled then
                 task.wait(0.1)
                 hookOneVaultTrigger(v)
             end
@@ -3339,33 +3333,16 @@ local function stopVaultHook()
 end
 
 SurTab:Toggle({
-    Title       = "Fast Vault  (auto saat lewat jendela)",
-    Description = "Saat karakter touch VaultTrigger → fastvault otomatis fire",
+    Title       = "Fast Vault",
+    Description = "Saat lewat jendela, otomatis vault cepat tanpa animasi",
     Value       = false,
     Callback    = function(v)
         fastVaultEnabled = v
         if v then
-            instantVaultEnabled = false
             startVaultHook()
             WindUI:Notify({ Title="Vault", Content="Fast Vault aktif!", Duration=2, Icon="wind" })
         else
-            if not instantVaultEnabled then stopVaultHook() end
-        end
-    end
-})
-
-SurTab:Toggle({
-    Title       = "Instant Vault  (skip seluruh animasi)",
-    Description = "Touch jendela → VaultEvent + VaultComplete langsung dikirim",
-    Value       = false,
-    Callback    = function(v)
-        instantVaultEnabled = v
-        if v then
-            fastVaultEnabled = false
-            startVaultHook()
-            WindUI:Notify({ Title="Vault", Content="Instant Vault aktif!", Duration=2, Icon="zap" })
-        else
-            if not fastVaultEnabled then stopVaultHook() end
+            stopVaultHook()
         end
     end
 })
@@ -3669,55 +3646,7 @@ killerTab:Button({
     end
 })
 
-MainTab:Section({ Title = "Feature Visual", Icon = "lightbulb" })
-MainTab:Button({
-    Title = "Ultra Fast Vault (Instant TP)",
-    Description = "Lompat jendela instan tanpa animasi",
-    Callback = function()
-        local player = game.Players.LocalPlayer
-        local character = player.Character
-        local hrp = character and character:FindFirstChild("HumanoidRootPart")
-        
-        if hrp then
-            -- Cari VaultTrigger terdekat (maksimal jarak 15 studs)
-            local targetTrigger = nil
-            local maxDist = 15
-            
-            for _, v in pairs(workspace:GetDescendants()) do
-                if v.Name == "VaultTrigger" and v:IsA("BasePart") then
-                    local dist = (hrp.Position - v.Position).Magnitude
-                    if dist < maxDist then
-                        targetTrigger = v
-                        maxDist = dist
-                    end
-                end
-            end
 
-            if targetTrigger then
-                local remotes = game:GetService("ReplicatedStorage").Remotes.Window
-                
-                -- 1. Kirim sinyal mulai lompat
-                remotes.VaultEvent:FireServer(targetTrigger, true)
-                
-                -- 2. Kirim sinyal Fast Vault
-                remotes.fastvault:FireServer(player)
-                
-                -- 3. BYPASS ANIMASI (Ini kunci biar instan)
-                -- Karakter dipaksa maju 8 studs menembus jendela
-                hrp.CFrame = hrp.CFrame * CFrame.new(0, 0, -8) 
-                
-                -- 4. Kirim sinyal selesai lompat
-                remotes.VaultCompleteEvent:FireServer(targetTrigger, false)
-            else
-                WindUI:Notify({
-                    Title = "Vault Error",
-                    Desc = "Tidak ada jendela di dekatmu!",
-                    Duration = 3
-                })
-            end
-        end
-    end
-})
 
 -- ── PERFORMANCE SETTINGS ────────────────────────────────────────
 MainTab:Section({ Title = "Performance Settings", Icon = "gauge" })
@@ -4185,7 +4114,7 @@ Info = InfoTab
 -- Helper: buat 1 tombol floating mandiri (draggable, tap = toggle)
 local function makeFloatingBtn(name, icon, colOn, colStrokeOn, initPos, tapFn)
     local sg = Instance.new("ScreenGui")
-    sg.Name = "VD_FB_" .. name
+    sg.Name = "Holic_FB_" .. name
     sg.ResetOnSpawn = false
     sg.DisplayOrder = 998
     sg.Parent = LocalPlayer:FindFirstChild("PlayerGui") or game:GetService("CoreGui")
@@ -4602,15 +4531,27 @@ FlingTab:Button({
 -- END OF SCRIPT
 -- ============================================================
 Info:Label({
-    Title = "Polleser Hub v1.3",
+    Title = "Holic",
     TextXAlignment = "Center",
-    TextSize = 17,
+    TextSize = 22,
 })
+
+Info:Paragraph({
+    Title = "",
+    Desc = "Dibuat oleh Henn\nPada tanggal 01 Mei 2026\n\nScript khusus untuk Violence District\nFast Vault, ESP, Aimbot, Heal, dan lainnya.",
+    Image = "rbxassetid://99240933011775",
+    ImageSize = 40,
+    Thumbnail = "",
+    ThumbnailSize = 0,
+    Locked = false,
+    Buttons = {}
+})
+
 Info:Divider()
 
-local Discord = Info:Paragraph({
+Info:Paragraph({
     Title = "Discord",
-    Desc = "Join our discord for more scripts!",
+    Desc = "Join server Discord untuk update, info, dan chat!",
     Image = "rbxassetid://99240933011775",
     ImageSize = 30,
     Thumbnail = "",
