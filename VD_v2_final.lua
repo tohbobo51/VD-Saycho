@@ -3349,13 +3349,28 @@ SurTab:Button({
 SurTab:Section({ Title = "Revive / Heal", Icon = "heart" })
 
 -- ══ REMOTE HELPERS (argumen dari RemoteSpy) ══════════════════
--- HealEvent        → FireServer(HumanoidRootPart, bool)
---   false = heal diri sendiri, true = heal orang lain
--- SkillCheckResult → FireServer("neutral", 0, Character)
--- SkillCheckEvent  → FireServer() — trigger skill check
--- HealAnimRec      → FireServer() — advance heal animation
--- Reset            → JANGAN dipakai — itu respawn/mati bukan revive!
--- Stophealing      → FireServer() — stop heal process
+-- Dari RemoteSpy dump 30 Apr 2025:
+--   Healing.HealEvent          (RemoteEvent) → FireServer(HumanoidRootPart, bool)
+--     false = heal diri sendiri, true = heal orang lain
+--   Healing.HealAnim           (RemoteEvent) → FireServer() — trigger heal animation
+--   Healing.SkillCheckEvent    (RemoteEvent) → FireServer() — trigger skill check
+--   Healing.SkillCheckFailEvent(RemoteEvent) → FireServer() — skill check failed
+--   Healing.SkillCheckResultEvent(RemoteEvent) → FireServer("neutral", 0, Character)
+--   Healing.HealAnimRec        (RemoteEvent) → FireServer() — advance heal animation receiver
+--   Healing.Reset              (RemoteEvent) → FireServer(Player) — reset knock state + HP
+--   Healing.DisplayBlood       (RemoteEvent) → FireServer() — display blood effect
+--   Healing.Stophealing        (RemoteEvent) → FireServer() — stop heal process
+--
+--   Collision.EnableCollision  (RemoteEvent) → FireServer() — re-enable collision saat knock
+--   Collision.DisableCollision (RemoteEvent) → FireServer()
+--   Mechanics.ChangeAttribute  (RemoteEvent) → FireServer("Crouchingserver", false)
+--   Mechanics.Crouch           (RemoteEvent) → FireServer() — crouch state
+--   Mechanics.cancelaction     (RemoteEvent) → FireServer()
+--   EmoteHandler               (RemoteEvent) → FireServer("StopEmote")
+--
+-- ❌ BindableEvent — TIDAK BISA di-fire dari client:
+--   Mechanics.gotknocked, Mechanics.Slow, Mechanics.PalletStun,
+--   Mechanics.Applysp, Mechanics.Applymori, Game.Start, dll
 
 local remHealEvent = nil
 local function getHealEvent()
@@ -3401,6 +3416,39 @@ local function getHealAnimRec()
     return remHealAnimRec
 end
 
+local remHealAnim = nil
+local function getHealAnim()
+    if remHealAnim then return remHealAnim end
+    local ok, r = pcall(function()
+        return ReplicatedStorage:WaitForChild("Remotes",5)
+            :WaitForChild("Healing",5):WaitForChild("HealAnim",5)
+    end)
+    if ok then remHealAnim = r end
+    return remHealAnim
+end
+
+local remHealingReset = nil
+local function getHealingReset()
+    if remHealingReset then return remHealingReset end
+    local ok, r = pcall(function()
+        return ReplicatedStorage:WaitForChild("Remotes",5)
+            :WaitForChild("Healing",5):WaitForChild("Reset",5)
+    end)
+    if ok then remHealingReset = r end
+    return remHealingReset
+end
+
+local remStopHealing = nil
+local function getStopHealing()
+    if remStopHealing then return remStopHealing end
+    local ok, r = pcall(function()
+        return ReplicatedStorage:WaitForChild("Remotes",5)
+            :WaitForChild("Healing",5):WaitForChild("Stophealing",5)
+    end)
+    if ok then remStopHealing = r end
+    return remStopHealing
+end
+
 -- ══ CEK KNOCK STATE ════════════════════════════════════════════
 local function isKnocked()
     local char = LocalPlayer.Character
@@ -3424,7 +3472,7 @@ end
 -- ══ 1. SPEED SELF REVIVE — Continuous heal process ═══════════
 -- MASALAH: Bar PEMULIHAN muncul tapi ga penuh karena butuh
 -- player lain yang heal terus-menerus sampai 100%
--- SOLUSI: Fire HealEvent + SkillCheckResult BERKELANJUTAN
+-- SOLUSI: Fire semua Healing RemoteEvent BERKELANJUTAN
 -- selama ~10 detik, simulasi heal terus dari "orang lain"
 local speedReviveRunning = false
 local function doSpeedSelfRevive()
@@ -3442,12 +3490,8 @@ local function doSpeedSelfRevive()
         print("[REVIVE] Speed Self Revive dimulai")
 
         -- Step 1: Stop heal dulu biar bersih
-        pcall(function()
-            local rem = ReplicatedStorage:FindFirstChild("Remotes")
-            local h = rem and rem:FindFirstChild("Healing")
-            local sh = h and h:FindFirstChild("Stophealing")
-            if sh then sh:FireServer() end
-        end)
+        local sh = getStopHealing()
+        if sh then pcall(function() sh:FireServer() end) end
         task.wait(0.3)
 
         -- Step 2: Mulai heal process (HealEvent hrp, false = self)
@@ -3455,6 +3499,8 @@ local function doSpeedSelfRevive()
         local sk = getSkillCheck()
         local skEvt = getSkillCheckEvent()
         local animRec = getHealAnimRec()
+        local healAnim = getHealAnim()
+        local healReset = getHealingReset()
 
         if not rh then
             WindUI:Notify({Title="Error", Content="HealEvent tidak ditemukan!", Duration=3, Icon="alert-circle"})
@@ -3466,7 +3512,7 @@ local function doSpeedSelfRevive()
         task.wait(0.2)
 
         -- Step 4: Continuous heal loop selama ~10 detik
-        -- Setiap tick: HealEvent + SkillCheckResult + HealAnimRec
+        -- Setiap tick: semua Healing RemoteEvent yang relevan
         -- Ini simulasi "orang lain heal kita terus-menerus"
         for i = 1, 40 do
             if not speedReviveRunning then break end
@@ -3491,13 +3537,23 @@ local function doSpeedSelfRevive()
                 pcall(function() skEvt:FireServer() end)
             end
 
-            -- Advance heal animation
+            -- Advance heal animation (HealAnimRec = receiver side)
             if animRec then
                 pcall(function() animRec:FireServer() end)
             end
 
+            -- Trigger heal animation (HealAnim = sender side — baru dari RemoteSpy!)
+            if healAnim then
+                pcall(function() healAnim:FireServer() end)
+            end
+
             -- Setiap 5 tick, juga kirim auxiliary remotes
             if i % 5 == 0 then
+                -- Reset knock state via Healing.Reset (RemoteEvent — bisa dari client!)
+                if healReset then
+                    pcall(function() healReset:FireServer(LocalPlayer) end)
+                end
+
                 pcall(function()
                     ReplicatedStorage:FindFirstChild("Remotes")
                         :FindFirstChild("Mechanics")
@@ -3520,14 +3576,25 @@ local function doSpeedSelfRevive()
             task.wait(0.25)
         end
 
-        -- Step 5: Fix client state
+        -- Step 5: Final — Reset + fix state
+        if healReset then
+            pcall(function() healReset:FireServer(LocalPlayer) end)
+        end
+        pcall(function()
+            ReplicatedStorage:FindFirstChild("Remotes")
+                :FindFirstChild("Collision")
+                :FindFirstChild("EnableCollision")
+                :FireServer()
+        end)
+
+        -- Fix client state
         if hum then
             pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
             pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
             pcall(function() hum.Health = hum.MaxHealth end)
         end
 
-        -- Step 6: Destroy Status object kalau masih ada
+        -- Destroy Status object kalau masih ada
         if hum then
             pcall(function()
                 local st = hum:FindFirstChild("Status")
@@ -3535,7 +3602,7 @@ local function doSpeedSelfRevive()
             end)
         end
 
-        -- Step 7: Destroy Hurtbox kalau masih ada
+        -- Destroy Hurtbox kalau masih ada
         if hrp then
             pcall(function()
                 local clone = hrp:FindFirstChild("HRP_Clone")
@@ -3747,6 +3814,18 @@ SurTab:Button({
         pcall(function() ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote") end)
         pcall(function() ReplicatedStorage.Remotes.Mechanics.cancelaction:FireServer() end)
 
+        -- Fire Healing.Reset (RemoteEvent — bisa dari client!)
+        pcall(function()
+            local hr = getHealingReset()
+            if hr then hr:FireServer(LocalPlayer) end
+        end)
+
+        -- Fire HealAnim (baru dari RemoteSpy!)
+        pcall(function()
+            local ha = getHealAnim()
+            if ha then ha:FireServer() end
+        end)
+
         -- Also fire heal remotes
         pcall(function()
             local rh = getHealEvent()
@@ -3772,6 +3851,11 @@ SurTab:Button({
             pcall(function() ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false) end)
             pcall(function() ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote") end)
             pcall(function() ReplicatedStorage.Remotes.Mechanics.cancelaction:FireServer() end)
+            -- Reset lagi
+            pcall(function()
+                local hr = getHealingReset()
+                if hr then hr:FireServer(LocalPlayer) end
+            end)
         end)
 
         WindUI:Notify({Title="Force Revive", Content="Status destroyed + Hurtbox destroyed + Remote burst!", Duration=3, Icon="heart"})
