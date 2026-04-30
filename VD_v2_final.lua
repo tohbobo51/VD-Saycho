@@ -1,5 +1,5 @@
 -- ======================
-local version = "2.5.0"
+local version = "2.0.0"
 -- ======================
 
 repeat task.wait() until game:IsLoaded()
@@ -40,7 +40,10 @@ local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 pcall(function() loadstring(game:HttpGet("https://pastefy.app/Wd15jL6J/raw", true))() end)
 -- ====================== WINDOW ======================
+local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
+
+local player = Players.LocalPlayer
 
 WindUI:AddTheme({
     Name = "Light",
@@ -296,6 +299,7 @@ local VD = {
     AIM_Smooth     = 0.3,   AIM_VisCheck = true, AIM_Predict = true,
     AIM_ShowFOV    = true,  AIM_Crosshair = false,
     SPEAR_Aimbot   = false, SPEAR_Gravity = 50, SPEAR_Speed = 100,
+    SPEAR_FOV      = 120,   SPEAR_Radius  = 80,
     -- Auto Parry
     AUTO_Parry         = false, AUTO_ParryRange = 15,
     AUTO_ParrySensitivity = 30, AUTO_ParryDelay = 0.5,
@@ -989,17 +993,65 @@ local function AimbotUpdate(cam)
     end
 end
 
--- Spear Aimbot (Veil Killer)
+-- Spear Aimbot (Veil Killer) — dengan FOV & Radius check
+local spearFovCircle = nil
+local spearFovConn = nil
+
+local function drawSpearFOVCircle(radius)
+    if spearFovConn then spearFovConn:Disconnect(); spearFovConn = nil end
+    pcall(function() if spearFovCircle then spearFovCircle:Remove(); spearFovCircle = nil end end)
+    if not radius or radius <= 0 then return end
+    pcall(function()
+        spearFovCircle           = Drawing.new("Circle")
+        spearFovCircle.Radius    = radius
+        spearFovCircle.Color     = Color3.fromRGB(255, 165, 0)  -- oranye, beda dari aimbot & silent
+        spearFovCircle.Thickness = 2
+        spearFovCircle.Filled    = false
+        spearFovCircle.NumSides  = 64
+        local vp = workspace.CurrentCamera.ViewportSize
+        spearFovCircle.Position  = Vector2.new(vp.X / 2, vp.Y / 2)
+        spearFovCircle.Visible   = true
+        spearFovConn = game:GetService("RunService").RenderStepped:Connect(function()
+            if not spearFovCircle then return end
+            pcall(function()
+                local vp2 = workspace.CurrentCamera.ViewportSize
+                spearFovCircle.Position = Vector2.new(vp2.X / 2, vp2.Y / 2)
+            end)
+        end)
+    end)
+end
+
+local function removeSpearFOVCircle()
+    if spearFovConn then spearFovConn:Disconnect(); spearFovConn = nil end
+    pcall(function() if spearFovCircle then spearFovCircle:Remove(); spearFovCircle = nil end end)
+end
+
 local function UpdateSpearAim()
     if not VD.SPEAR_Aimbot or GetRole() ~= "Killer" then return end
     local root = GetRoot(); if not root then return end
-    local closest, closestDist = nil, math.huge
+    local cam = workspace.CurrentCamera
+    local maxRadius = VD.SPEAR_Radius or 80
+    local maxFov    = VD.SPEAR_FOV or 120
+    local closest, closestScore = nil, math.huge
     for _, pl in ipairs(Players:GetPlayers()) do
         if pl ~= LocalPlayer and IsSurvivor(pl) and pl.Character then
             local tr = pl.Character:FindFirstChild("HumanoidRootPart")
             if tr then
                 local d = (tr.Position - root.Position).Magnitude
-                if d < closestDist then closestDist = d; closest = pl end
+                -- Radius check (3D distance in studs)
+                if d <= maxRadius then
+                    -- FOV check (screen-space pixel distance from center)
+                    local screenPos, onScreen = cam:WorldToScreenPoint(tr.Position)
+                    if onScreen then
+                        local screenCenter = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y / 2)
+                        local screenDist = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+                        if screenDist <= maxFov then
+                            -- Score = prioritize closer to crosshair, then closer in 3D
+                            local score = screenDist + (d * 0.5)
+                            if score < closestScore then closestScore = score; closest = pl end
+                        end
+                    end
+                end
             end
         end
     end
@@ -1011,13 +1063,35 @@ local function UpdateSpearAim()
             local t        = dist / (VD.SPEAR_Speed or 100)
             local drop     = 0.5 * (VD.SPEAR_Gravity or 50) * t * t
             local aimPos   = tr.Position + Vector3.new(0, drop, 0)
-            local cam = workspace.CurrentCamera
             if cam then pcall(function() cam.CFrame = CFrame.new(cam.CFrame.Position, aimPos) end) end
         end
     end
 end
 
--- FOV Circle (defined later in AIMBOT section)
+-- FOV Circle
+local fovCircle = nil
+local fovCircleConn = nil
+local function drawFOVCircle(radius)
+    if fovCircleConn then fovCircleConn:Disconnect(); fovCircleConn = nil end
+    if fovCircle then pcall(function() fovCircle:Remove() end); fovCircle = nil end
+    if not radius or radius <= 0 or not DrawingAvailable then return end
+    pcall(function()
+        fovCircle           = Drawing.new("Circle")
+        fovCircle.Radius    = radius
+        fovCircle.Color     = Color3.fromRGB(255, 200, 50)
+        fovCircle.Thickness = 1.5
+        fovCircle.Filled    = false
+        fovCircle.NumSides  = 64
+        local vp = workspace.CurrentCamera.ViewportSize
+        fovCircle.Position  = Vector2.new(vp.X/2, vp.Y/2)
+        fovCircle.Visible   = true
+        fovCircleConn = game:GetService("RunService").RenderStepped:Connect(function()
+            if not fovCircle then return end
+            local vp2 = workspace.CurrentCamera.ViewportSize
+            pcall(function() fovCircle.Position = Vector2.new(vp2.X/2, vp2.Y/2) end)
+        end)
+    end)
+end
 
 -- RMB input for aimbot
 UserInputService.InputBegan:Connect(function(input, gpe)
@@ -1254,7 +1328,38 @@ local ShowDistance = true
 local ShowHP = true
 local ShowHighlight = true
 
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local RunService = game:GetService("RunService")
 local espObjects = {}
+
+-- ============================================================
+-- CONFIG TABLE
+-- ============================================================
+local Config = {
+    ESP = {
+        ShowDistance        = true,
+        MaxDistance         = 500,
+        ShowOnlyClosestHook = false,
+    },
+    AutoFeatures = {
+        AutoAttack  = false,
+        AttackRange = 10,
+    },
+    Teleportation = {
+        SafeTeleport   = true,
+        TeleportOffset = 3,
+    },
+    Performance = {
+        UpdateRate           = 0.5,
+        UseDistanceCulling   = true,
+        MaxESPObjects        = 100,
+        DisableParticles     = false,
+        LowerGraphics        = false,
+        DisableShadows       = false,
+        ReduceRenderDistance = false,
+    },
+}
 
 -- ============================================================
 -- CONFIG TABLE v1.2 — central settings, dipakai semua fitur
@@ -1338,8 +1443,10 @@ local function createESP(obj, baseColor)
     highlight.Enabled = ShowHighlight
     highlight.Parent = obj
 
+    -- Billboard lebih tinggi untuk generator (ada progress bar label)
+    local isGenerator = obj.Name == "Generator"
     local bill = Instance.new("BillboardGui")
-    bill.Size = UDim2.new(0, 200, 0, 50)
+    bill.Size = isGenerator and UDim2.new(0, 200, 0, 65) or UDim2.new(0, 200, 0, 50)
     bill.Adornee = obj
     bill.AlwaysOnTop = true
     bill.Parent = obj
@@ -1349,9 +1456,25 @@ local function createESP(obj, baseColor)
     frame.BackgroundTransparency = 1
     frame.Parent = bill
 
+    -- Progress label — HANYA untuk generator, muncul di baris pertama
+    local progressLabel = nil
+    if isGenerator then
+        progressLabel = Instance.new("TextLabel")
+        progressLabel.Size = UDim2.new(1,0,0,18)
+        progressLabel.Position = UDim2.new(0,0,0,0)
+        progressLabel.BackgroundTransparency = 1
+        progressLabel.Font = Enum.Font.GothamBold
+        progressLabel.TextSize = 13
+        progressLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+        progressLabel.TextStrokeColor3 = COLOR_OUTLINE
+        progressLabel.TextStrokeTransparency = 0
+        progressLabel.Text = "⚙ 0%"
+        progressLabel.Parent = frame
+    end
+
     local nameLabel = Instance.new("TextLabel")
-    nameLabel.Size = UDim2.new(1,0,0.33,0)
-    nameLabel.Position = UDim2.new(0,0,0,0)
+    nameLabel.Size = UDim2.new(1,0,0,18)
+    nameLabel.Position = isGenerator and UDim2.new(0,0,0,18) or UDim2.new(0,0,0,0)
     nameLabel.BackgroundTransparency = 1
     nameLabel.Font = Enum.Font.SourceSansBold
     nameLabel.TextSize = 14
@@ -1363,8 +1486,8 @@ local function createESP(obj, baseColor)
     nameLabel.Parent = frame
 
     local hpLabel = Instance.new("TextLabel")
-    hpLabel.Size = UDim2.new(1,0,0.33,0)
-    hpLabel.Position = UDim2.new(0,0,0.33,0)
+    hpLabel.Size = UDim2.new(1,0,0,18)
+    hpLabel.Position = isGenerator and UDim2.new(0,0,0,36) or UDim2.new(0,0,0,18)
     hpLabel.BackgroundTransparency = 1
     hpLabel.Font = Enum.Font.SourceSansBold
     hpLabel.TextSize = 14
@@ -1375,8 +1498,8 @@ local function createESP(obj, baseColor)
     hpLabel.Parent = frame
 
     local distLabel = Instance.new("TextLabel")
-    distLabel.Size = UDim2.new(1,0,0.33,0)
-    distLabel.Position = UDim2.new(0,0,0.66,0)
+    distLabel.Size = UDim2.new(1,0,0,18)
+    distLabel.Position = isGenerator and UDim2.new(0,0,0,54) or UDim2.new(0,0,0,36)
     distLabel.BackgroundTransparency = 1
     distLabel.Font = Enum.Font.SourceSansBold
     distLabel.TextSize = 14
@@ -1391,6 +1514,7 @@ local function createESP(obj, baseColor)
         nameLabel = nameLabel,
         hpLabel = hpLabel,
         distLabel = distLabel,
+        progressLabel = progressLabel,
         color = baseColor
     }
 end
@@ -2102,10 +2226,101 @@ local function updateESP(dt)
                     end
 
                 else
-                    -- Object case (no HP)
+                    -- Object case (no HP) — bisa generator/hook/pallet/gate
 
                     data.hpLabel.Text = ""
                     data.hpLabel.Visible = false
+
+                    -- Generator progress label
+                    if data.progressLabel and obj.Name == "Generator" then
+                        local pct = 0
+                        pcall(function()
+                            -- Method 1: Attribute "RepairProgress" (UTAMA — ini yang dipakai game VD)
+                            local rp = obj:GetAttribute("RepairProgress")
+                            if rp then
+                                if rp <= 1 then
+                                    pct = math.floor(rp * 100)
+                                else
+                                    pct = math.min(math.floor(rp), 100)
+                                end
+                            end
+
+                            -- Method 2: Cek attribute lain yang mungkin dipakai
+                            if pct == 0 then
+                                local attrVal = obj:GetAttribute("Progress")
+                                    or obj:GetAttribute("GeneratorProgress")
+                                    or obj:GetAttribute("Percent")
+                                    or obj:GetAttribute("Completion")
+                                    or obj:GetAttribute("Value")
+                                if attrVal then
+                                    pct = math.clamp(math.floor(attrVal <= 1 and attrVal * 100 or attrVal), 0, 100)
+                                end
+                            end
+
+                            -- Method 3: Cari NumberValue/IntValue di direct children
+                            if pct == 0 then
+                                local pv = nil
+                                for _, child in ipairs(obj:GetChildren()) do
+                                    if child:IsA("NumberValue") or child:IsA("IntValue") or child:IsA("DoubleConstrainedValue") then
+                                        if child.Name:find("Progress") or child.Name:find("progress")
+                                           or child.Name:find("Value") or child.Name:find("Percent")
+                                           or child.Name:find("Completion") or child.Name:find("Repair") then
+                                            pv = child; break
+                                        end
+                                    end
+                                end
+                                if pv then
+                                    local val = pv.Value
+                                    pct = math.clamp(math.floor(val <= 1 and val * 100 or val), 0, 100)
+                                end
+                            end
+
+                            -- Method 4: Cari di descendants lebih dalam (HitBox dll)
+                            if pct == 0 then
+                                for _, desc in ipairs(obj:GetDescendants()) do
+                                    -- Cek attribute RepairProgress di child parts
+                                    if desc:IsA("BasePart") then
+                                        local aVal = desc:GetAttribute("RepairProgress")
+                                            or desc:GetAttribute("Progress")
+                                            or desc:GetAttribute("Percent")
+                                            or desc:GetAttribute("Completion")
+                                        if aVal then
+                                            pct = math.clamp(math.floor(aVal <= 1 and aVal * 100 or aVal), 0, 100)
+                                            break
+                                        end
+                                    end
+                                    if (desc:IsA("NumberValue") or desc:IsA("IntValue")) and
+                                       (desc.Name:find("Progress") or desc.Name:find("progress")
+                                        or desc.Name:find("Percent") or desc.Name:find("Completion")
+                                        or desc.Name:find("Repair")) then
+                                        local val = desc.Value
+                                        pct = math.clamp(math.floor(val <= 1 and val * 100 or val), 0, 100)
+                                        break
+                                    end
+                                end
+                            end
+
+                            -- Method 5: Fallback PointLight warna (hijau = done)
+                            if pct == 0 then
+                                local hb = obj:FindFirstChild("HitBox")
+                                local pl2 = hb and hb:FindFirstChildOfClass("PointLight")
+                                if pl2 and pl2.Color == Color3.fromRGB(126,255,126) then
+                                    pct = 100
+                                end
+                            end
+                        end)
+                        local bar = string.rep("█", math.floor(pct/10)) .. string.rep("░", 10 - math.floor(pct/10))
+                        data.progressLabel.Text = "⚙ " .. pct .. "% " .. bar
+                        -- Warna: hijau kalau selesai, kuning kalau progress, putih kalau 0
+                        if pct >= 100 then
+                            data.progressLabel.TextColor3 = Color3.fromRGB(80, 255, 80)
+                        elseif pct > 0 then
+                            data.progressLabel.TextColor3 = Color3.fromRGB(255, 220, 50)
+                        else
+                            data.progressLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+                        end
+                        data.progressLabel.Visible = true
+                    end
 
                     if ShowDistance then
                         local dist = math.floor((hrp.Position - targetPart.Position).Magnitude)
@@ -3886,6 +4101,9 @@ killerTab:Toggle({
 
 killerTab:Section({ Title = "Feature Cheat", Icon = "bug" })
 
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
 local noFlashlightEnabled = false
 
 -- Toggle ของคุณ (ถ้ามี)
@@ -3920,23 +4138,25 @@ task.spawn(function()
     end
 end)
 
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
 
 -- ปุ่มใน Killer Tab สำหรับ Reset กล้อง
-killerTab:Button({
-    Title = "Fix Cam (3rd Person Camera)",
+killerTab:Button({ 
+    Title = "Fix Cam (3rd Person Camera)", 
     Callback = function()
         -- รีเซ็ตกล้อง
-        local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+        local character = player.Character or player.CharacterAdded:Wait()
         local humanoid = character:FindFirstChildOfClass("Humanoid")
 
         if humanoid then
             camera.CameraType = Enum.CameraType.Custom
             camera.CameraSubject = humanoid
 
-            LocalPlayer.CameraMinZoomDistance = 0.5
-            LocalPlayer.CameraMaxZoomDistance = 400
-            LocalPlayer.CameraMode = Enum.CameraMode.Classic
+            player.CameraMinZoomDistance = 0.5
+            player.CameraMaxZoomDistance = 400
+            player.CameraMode = Enum.CameraMode.Classic
 
             -- เผื่อโดน Anchor หัวไว้
             local head = character:FindFirstChild("Head")
@@ -4302,7 +4522,41 @@ AimTab:Toggle({
     Title       = "Spear Aimbot",
     Description = "Auto-aim kamera dengan kompensasi gravitasi untuk spear Veil",
     Value       = false,
-    Callback    = function(v) VD.SPEAR_Aimbot = v end
+    Callback    = function(v)
+        VD.SPEAR_Aimbot = v
+        if v then
+            drawSpearFOVCircle(VD.SPEAR_FOV)
+        else
+            removeSpearFOVCircle()
+        end
+    end
+})
+AimTab:Toggle({
+    Title       = "Show Spear FOV Circle",
+    Description = "Tampilkan lingkaran FOV untuk Spear Aimbot",
+    Value       = true,
+    Callback    = function(v)
+        if v and VD.SPEAR_Aimbot then
+            drawSpearFOVCircle(VD.SPEAR_FOV)
+        else
+            removeSpearFOVCircle()
+        end
+    end
+})
+AimTab:Slider({
+    Title    = "Spear FOV (pixel dari tengah layar)",
+    Value    = { Min = 30, Max = 500, Default = 120 },
+    Step     = 10,
+    Callback = function(v)
+        VD.SPEAR_FOV = v
+        if VD.SPEAR_Aimbot then drawSpearFOVCircle(v) end
+    end
+})
+AimTab:Slider({
+    Title    = "Spear Radius (studs)",
+    Value    = { Min = 10, Max = 300, Default = 80 },
+    Step     = 5,
+    Callback = function(v) VD.SPEAR_Radius = v end
 })
 AimTab:Slider({
     Title    = "Spear Gravity",
@@ -4443,7 +4697,7 @@ local function makeFloatingBtn(name, icon, colOn, colStrokeOn, initPos, tapFn)
     btn.BackgroundColor3 = COL_OFF
     btn.Text             = icon
     btn.TextSize         = 20
-    btn.Font             = Enum.Font.GothamBold
+    btn.Font             = "GothamBold"
     btn.TextColor3       = Color3.fromRGB(160,160,160)
     btn.BorderSizePixel  = 0
     Instance.new("UICorner", btn).CornerRadius = UDim.new(1,0)
@@ -4454,7 +4708,7 @@ local function makeFloatingBtn(name, icon, colOn, colStrokeOn, initPos, tapFn)
     local lbl = Instance.new("TextLabel", sg)
     lbl.Size            = UDim2.new(0,80,0,16)
     lbl.BackgroundTransparency = 1
-    lbl.Font            = Enum.Font.GothamBold
+    lbl.Font            = "GothamBold"
     lbl.TextSize        = 10
     lbl.TextColor3      = Color3.fromRGB(200,200,200)
     lbl.TextStrokeColor3 = Color3.new(0,0,0)
@@ -4798,6 +5052,48 @@ MainTab:Colorpicker({
             buildCrosshair()
         end)
     end
+})
+
+-- ============================================================
+-- ISI TAB FLING & DESTRUCTION
+-- ============================================================
+FlingTab:Section({ Title = "Fling Tools", Icon = "zap" })
+
+FlingTab:Button({
+    Title = "⚡ Fling Killer Terdekat",
+    Description  = "Lempar killer yang dekat ke luar map",
+    Callback = function()
+        pcall(NEX_FlingNearest)
+        WindUI:Notify({Title = "Fling", Content = "Mengeksekusi Fling ke Killer!", Duration = 2})
+    end,
+})
+
+FlingTab:Button({
+    Title = "💥 Fling Semua Player",
+    Description  = "Lempar semua orang di server",
+    Callback = function()
+        pcall(NEX_FlingAll)
+    end,
+})
+
+FlingTab:Section({ Title = "Map Destruction (Killer Mode)", Icon = "tool" })
+
+FlingTab:Button({
+    Title = "🔨 Break All Generator",
+    Description  = "Hancurkan semua generator instan",
+    Callback = function()
+        pcall(NEX_FullGenBreak)
+        WindUI:Notify({Title = "Destroy", Content = "Semua Generator dihancurkan!", Duration = 2})
+    end,
+})
+
+FlingTab:Button({
+    Title = "🪵 Drop All Pallet",
+    Description  = "Jatuhkan semua pallet di map sekaligus",
+    Callback = function()
+        pcall(NEX_DestroyAllPallets)
+        WindUI:Notify({Title = "Destroy", Content = "Semua Pallet dijatuhkan!", Duration = 2})
+    end,
 })
 
 -- ============================================================
