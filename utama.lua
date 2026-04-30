@@ -129,7 +129,7 @@ end
 local Window = WindUI:CreateWindow({
     Title = "Holic",
     Icon = "rbxassetid://99240933011775", 
-    Author = "Henn",
+    Author = "Saycho",
     Folder = "Holic",
     Size = UDim2.fromOffset(500, 350),
     Transparent = getgenv().TransparencyEnabled,
@@ -4107,6 +4107,48 @@ SilentTab:Slider({
 Info = InfoTab
 
 -- ============================================================
+-- INFORMATION TAB CONTENT
+-- ============================================================
+Info:Label({
+    Title = "Holic",
+    TextXAlignment = "Center",
+    TextSize = 22,
+})
+
+Info:Paragraph({
+    Title = "",
+    Desc = "Dibuat oleh Saycho\nPada tanggal 01 Mei 2026\n\nScript khusus untuk Violence District\nFast Vault, ESP, Aimbot, Heal, dan lainnya.",
+    Image = "rbxassetid://99240933011775",
+    ImageSize = 40,
+    Thumbnail = "",
+    ThumbnailSize = 0,
+    Locked = false,
+    Buttons = {}
+})
+
+Info:Divider()
+
+Info:Paragraph({
+    Title = "Discord",
+    Desc = "Join server Discord untuk update, info, dan chat!",
+    Image = "rbxassetid://99240933011775",
+    ImageSize = 30,
+    Thumbnail = "",
+    ThumbnailSize = 0,
+    Locked = false,
+    Buttons = {
+        {
+            Icon = "copy",
+            Title = "Copy Link",
+            Callback = function()
+                setclipboard("https://discord.gg/9yAtRgpsua")
+                print("Copied discord link to clipboard!")
+            end,
+        }
+    }
+})
+
+-- ============================================================
 -- QUICK PANEL  — 3 tombol floating TERPISAH, masing-masing
 --   punya toggle sendiri di MainTab. Setiap tombol bisa di-drag.
 -- ============================================================
@@ -4530,41 +4572,3 @@ FlingTab:Button({
 -- ============================================================
 -- END OF SCRIPT
 -- ============================================================
-Info:Label({
-    Title = "Holic",
-    TextXAlignment = "Center",
-    TextSize = 22,
-})
-
-Info:Paragraph({
-    Title = "",
-    Desc = "Dibuat oleh Henn\nPada tanggal 01 Mei 2026\n\nScript khusus untuk Violence District\nFast Vault, ESP, Aimbot, Heal, dan lainnya.",
-    Image = "rbxassetid://99240933011775",
-    ImageSize = 40,
-    Thumbnail = "",
-    ThumbnailSize = 0,
-    Locked = false,
-    Buttons = {}
-})
-
-Info:Divider()
-
-Info:Paragraph({
-    Title = "Discord",
-    Desc = "Join server Discord untuk update, info, dan chat!",
-    Image = "rbxassetid://99240933011775",
-    ImageSize = 30,
-    Thumbnail = "",
-    ThumbnailSize = 0,
-    Locked = false,
-    Buttons = {
-        {
-            Icon = "copy",
-            Title = "Copy Link",
-            Callback = function()
-                setclipboard("https://discord.gg/9yAtRgpsua")
-                print("Copied discord link to clipboard!")
-            end,
-        }
-    }
-})
