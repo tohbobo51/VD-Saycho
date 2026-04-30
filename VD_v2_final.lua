@@ -1,5 +1,5 @@
 -- ======================
-local version = "2.4.0"
+local version = "2.5.0"
 -- ======================
 
 repeat task.wait() until game:IsLoaded()
@@ -38,7 +38,7 @@ local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 
 -- WindUI
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
-loadstring(game:HttpGet("https://pastefy.app/Wd15jL6J/raw", true))()
+pcall(function() loadstring(game:HttpGet("https://pastefy.app/Wd15jL6J/raw", true))() end)
 -- ====================== WINDOW ======================
 local HttpService = game:GetService("HttpService")
 
@@ -198,6 +198,50 @@ pcall(function()
     end, 990)
 end)
 
+-- ── Tombol Rejoin (kiri Transparency, priority 988) ──────────
+pcall(function()
+    Window:CreateTopbarButton("RejoinBtn", "refresh-cw", function()
+        WindUI:Notify({ Title = "Server", Content = "Rejoining...", Duration = 2, Icon = "refresh-cw" })
+        task.wait(1)
+        pcall(function()
+            game:GetService("TeleportService"):Teleport(game.PlaceId, LocalPlayer)
+        end)
+    end, 988)
+end)
+
+-- ── Tombol Ganti Server (kiri Rejoin, priority 987) ──────────
+pcall(function()
+    Window:CreateTopbarButton("GantiServerBtn", "globe", function()
+        WindUI:Notify({ Title = "Server", Content = "Mencari server baru...", Duration = 2, Icon = "globe" })
+        task.spawn(function()
+            local TeleportService = game:GetService("TeleportService")
+            local placeId = game.PlaceId
+            local ok, servers = pcall(function()
+                return TeleportService:GetSortedGameInstances(placeId, {
+                    SortOrder = Enum.SortOrder.Descending,
+                    MaxRows   = 20,
+                })
+            end)
+            if ok and servers and #servers > 0 then
+                local current = game.JobId
+                local picked  = nil
+                for _, s in ipairs(servers) do
+                    if s.JobId ~= current then picked = s; break end
+                end
+                if picked then
+                    pcall(function()
+                        TeleportService:TeleportToPlaceInstance(placeId, picked.JobId, LocalPlayer)
+                    end)
+                else
+                    pcall(function() TeleportService:Teleport(placeId, LocalPlayer) end)
+                end
+            else
+                pcall(function() TeleportService:Teleport(placeId, LocalPlayer) end)
+            end
+        end)
+    end, 987)
+end)
+
 Window:EditOpenButton({
     Title = "Polleser Hub",
     Icon = "rbxassetid://99240933011775",
@@ -217,11 +261,960 @@ local Main2Divider = Window:Divider()
 local MainTab = Window:Tab({ Title = "Main", Icon = "rocket" })
 local EspTab = Window:Tab({ Title = "Esp", Icon = "eye" })
 local AimTab = Window:Tab({ Title = "Aimbot", Icon = "crosshair" })
+local SilentTab = Window:Tab({ Title = "Silent Aim", Icon = "ghost" })
 local PlayerTab = Window:Tab({ Title = "Player", Icon = "user" })
+local FlingTab = Window:Tab({ Title = "Fling", Icon = "zap" })
 
 Window:SelectTab(1)
 
--- ====================== ESP SYSTEM ======================
+-- ============================================================
+-- CORE HELPERS (GetRole, IsKiller, IsSurvivor, Root, Cache)
+-- ============================================================
+local function GetRoot()
+    local c = LocalPlayer.Character
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function IsKiller(pl)
+    return pl and pl.Character and (
+        pl.Character:FindFirstChild("Weapon") ~= nil or
+        pl.Character:FindFirstChild("KillerTool") ~= nil or
+        (pl.Team and (pl.Team.Name == "Killer" or pl.Team.Name == "Murderer"))
+    )
+end
+local function IsSurvivor(pl)
+    return pl and pl.Character and not IsKiller(pl)
+end
+local function GetRole()
+    return IsKiller(LocalPlayer) and "Killer" or "Survivor"
+end
+
+-- VD config table (extends existing Config)
+local VD = {
+    -- Aimbot
+    AIM_Enabled    = false, AIM_UseRMB = true, AIM_FOV = 120,
+    AIM_Smooth     = 0.3,   AIM_VisCheck = true, AIM_Predict = true,
+    AIM_ShowFOV    = true,  AIM_Crosshair = false,
+    SPEAR_Aimbot   = false, SPEAR_Gravity = 50, SPEAR_Speed = 100,
+    -- Auto Parry
+    AUTO_Parry         = false, AUTO_ParryRange = 15,
+    AUTO_ParrySensitivity = 30, AUTO_ParryDelay = 0.5,
+    -- Auto Wiggle
+    SURV_AutoWiggle = false,
+    -- Survivor survival
+    SURV_NoFall    = false, AUTO_TeleAway = false, AUTO_TeleAwayDist = 40,
+    BEAT_Survivor  = false,
+    -- Killer combat
+    AUTO_Attack    = false, AUTO_AttackRange = 12,
+    HITBOX_Enabled = false, HITBOX_Size = 15,
+    KILLER_DoubleTap      = false, KILLER_InfiniteLunge = false,
+    KILLER_AutoHook       = false, KILLER_AntiBlind     = false,
+    KILLER_NoPalletStun   = false, KILLER_NoSlowdown    = false,
+    KILLER_DestroyPallets = false, KILLER_FullGenBreak  = false,
+    BEAT_Killer    = false, _KillerTarget = nil,
+    -- Fling
+    FLING_Enabled  = false, FLING_Strength = 200,
+    -- Radar
+    RADAR_Enabled   = false, RADAR_Size = 120, RADAR_Circle = false,
+    RADAR_Killer    = true,  RADAR_Survivor = true,
+    RADAR_Generator = true,  RADAR_Pallet   = true,
+    -- Camera
+    CAM_ThirdPerson = false, CAM_ShiftLock = false,
+    -- Generator auto-stop
+    AUTO_StopOnKiller = false, AUTO_ReturnToGen = false,
+    -- Misc
+    Destroyed = false,
+}
+
+-- NEX_Cache: real-time object cache updated by scan loop
+local NEX_Cache = {
+    Generators = {}, Hooks = {}, Pallets = {}, Gates = {},
+    ClosestHook = nil, ExitPos = nil,
+}
+
+-- Safe cache scan (every 3s)
+task.spawn(function()
+    while not VD.Destroyed do
+        local map = workspace:FindFirstChild("Map")
+        if map then
+            -- Generators
+            local gens = {}
+            for _, obj in ipairs(map:GetDescendants()) do
+                if obj:IsA("BasePart") and
+                   (obj.Name:find("Generator") or obj.Name:find("generator")) and
+                   not obj.Name:find("Point") then
+                    table.insert(gens, { part = obj, model = obj.Parent })
+                end
+            end
+            NEX_Cache.Generators = gens
+
+            -- Hooks
+            local hooks = {}
+            for _, obj in ipairs(map:GetDescendants()) do
+                if (obj.Name == "Hook" or obj.Name == "HookPoint" or
+                    obj.Name == "HookHitbox") and obj:IsA("BasePart") then
+                    table.insert(hooks, { part = obj, model = obj.Parent })
+                end
+            end
+            NEX_Cache.Hooks = hooks
+
+            -- Pallets
+            local pallets = {}
+            for _, obj in ipairs(map:GetDescendants()) do
+                if (obj.Name == "Pallet" or obj.Name == "PalletStatic") and obj:IsA("BasePart") then
+                    table.insert(pallets, { part = obj, model = obj.Parent })
+                end
+            end
+            NEX_Cache.Pallets = pallets
+
+            -- Gates
+            local gates = {}
+            for _, obj in ipairs(map:GetDescendants()) do
+                if (obj.Name == "Gate" or obj.Name == "ExitGate") and obj:IsA("BasePart") then
+                    table.insert(gates, { part = obj })
+                end
+            end
+            NEX_Cache.Gates = gates
+
+            -- Closest hook
+            local root = GetRoot()
+            if root and #hooks > 0 then
+                local cl, cd = nil, math.huge
+                for _, h in ipairs(hooks) do
+                    if h.part then
+                        local d = (h.part.Position - root.Position).Magnitude
+                        if d < cd then cd = d; cl = h end
+                    end
+                end
+                NEX_Cache.ClosestHook = cl
+            end
+        end
+        task.wait(3)
+    end
+end)
+
+-- Drawing availability
+local DrawingAvailable = pcall(function() local t = Drawing.new("Square"); t:Remove() end)
+local function SafeDrawing(type_)
+    local ok, d = pcall(function() return Drawing.new(type_) end)
+    return ok and d or nil
+end
+
+-- Teleport helper
+local function NEX_TeleportToPosition(pos)
+    local root = GetRoot()
+    if root then
+        pcall(function() root.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0)) end)
+    end
+end
+
+-- ============================================================
+-- FEATURE LOGIC FUNCTIONS
+-- ============================================================
+
+-- ── Auto Parry (working — fires Remotes.Items.ParryingDagger.parry) ──
+local LastParryTime  = 0
+local LastDebugParry = 0
+local function NEX_AutoParry()
+    if not VD.AUTO_Parry then return end
+    if GetRole() ~= "Survivor" then return end
+    if tick() - LastParryTime < (VD.AUTO_ParryDelay or 0.5) then return end
+    local root = GetRoot(); if not root then return end
+
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= LocalPlayer and IsKiller(pl) and pl.Character then
+            local kr = pl.Character:FindFirstChild("HumanoidRootPart")
+            if kr then
+                local dist = (kr.Position - root.Position).Magnitude
+                if dist <= (VD.AUTO_ParryRange or 15) then
+                    local dir = (kr.Position - root.Position).Unit
+                    local dot = root.CFrame.LookVector:Dot(dir)
+                    local ang = math.deg(math.acos(math.clamp(dot, -1, 1)))
+                    local rp  = RaycastParams.new()
+                    rp.FilterType = Enum.RaycastFilterType.Blacklist
+                    rp.FilterDescendantsInstances = { LocalPlayer.Character, pl.Character, workspace.CurrentCamera }
+                    local ray = workspace:Raycast(root.Position, kr.Position - root.Position, rp)
+                    if ang <= (VD.AUTO_ParrySensitivity or 30) and not ray then
+                        pcall(function()
+                            local rem   = ReplicatedStorage:FindFirstChild("Remotes")
+                            local items = rem and rem:FindFirstChild("Items")
+                            local dagger = items and (
+                                items:FindFirstChild("Parrying Dagger") or
+                                items:FindFirstChild("Parry") or
+                                items:FindFirstChild("Dagger")
+                            )
+                            local parry = dagger and (
+                                dagger:FindFirstChild("parry") or
+                                dagger:FindFirstChildWhichIsA("RemoteEvent")
+                            )
+                            if parry then
+                                root.CFrame = CFrame.lookAt(root.Position,
+                                    Vector3.new(kr.Position.X, root.Position.Y, kr.Position.Z))
+                                parry:FireServer()
+                                LastParryTime = tick()
+                            end
+                        end)
+                        break
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- ── Auto Wiggle ──
+local LastWiggleTime = 0
+local function NEX_AutoWiggle()
+    if not VD.SURV_AutoWiggle or GetRole() ~= "Survivor" then return end
+    if tick() - LastWiggleTime < 0.3 then return end
+    pcall(function()
+        local r = ReplicatedStorage:FindFirstChild("Remotes")
+        local c = r and r:FindFirstChild("Carry")
+        local s = c and c:FindFirstChild("SelfUnHookEvent")
+        if s then s:FireServer(); LastWiggleTime = tick() end
+    end)
+end
+
+-- ── No Fall Damage ──
+local AntiFallSetup = false
+local function SetupNoFallDamage()
+    if AntiFallSetup then return end; AntiFallSetup = true
+    pcall(function()
+        local r = ReplicatedStorage:FindFirstChild("Remotes")
+        local m = r and r:FindFirstChild("Mechanics")
+        local fe = m and m:FindFirstChild("Fall")
+        if not (fe and fe:IsA("RemoteEvent")) then return end
+        local ok, mt = pcall(function() return getrawmetatable(game) end)
+        if ok and mt and setreadonly then
+            setreadonly(mt, false)
+            local old = mt.__namecall
+            mt.__namecall = newcclosure(function(self, ...)
+                if not checkcaller() and VD.SURV_NoFall and self == fe then
+                    if getnamecallmethod() == "FireServer" then return nil end
+                end
+                return old(self, ...)
+            end)
+            setreadonly(mt, true)
+        end
+    end)
+end
+pcall(SetupNoFallDamage)
+
+-- ── Flee Killer (Auto TeleAway) ──
+local LastTeleAway = 0
+local function NEX_TeleportAway()
+    if not VD.AUTO_TeleAway then return end
+    if GetRole() == "Killer" then return end
+    if tick() - LastTeleAway < 3 then return end
+    local root = GetRoot(); if not root then return end
+    local killerDist, killerPos = math.huge, nil
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= LocalPlayer and IsKiller(pl) and pl.Character then
+            local kr = pl.Character:FindFirstChild("HumanoidRootPart")
+            if kr then
+                local d = (kr.Position - root.Position).Magnitude
+                if d < killerDist then killerDist = d; killerPos = kr.Position end
+            end
+        end
+    end
+    if killerDist > (VD.AUTO_TeleAwayDist or 40) then return end
+    LastTeleAway = tick()
+    local bestSpot, bestDist = nil, 0
+    for _, gate in ipairs(NEX_Cache.Gates) do
+        if gate.part and killerPos then
+            local d = (gate.part.Position - killerPos).Magnitude
+            if d > bestDist then bestDist = d; bestSpot = gate.part.Position end
+        end
+    end
+    if not bestSpot then
+        for _, gen in ipairs(NEX_Cache.Generators) do
+            if gen.part and killerPos then
+                local d = (gen.part.Position - killerPos).Magnitude
+                if d > bestDist then bestDist = d; bestSpot = gen.part.Position end
+            end
+        end
+    end
+    if not bestSpot and killerPos then
+        bestSpot = root.Position + (root.Position - killerPos).Unit * 80
+    end
+    if bestSpot then NEX_TeleportToPosition(bestSpot) end
+end
+
+-- ── Beat Survivor (auto escape) ──
+local function NEX_BeatGameSurvivor()
+    if not VD.BEAT_Survivor or GetRole() ~= "Survivor" then return end
+    local root = GetRoot(); if not root then return end
+    task.spawn(function()
+        local exitPos = nil
+        pcall(function()
+            local map = workspace:FindFirstChild("Map")
+            for _, g in ipairs(NEX_Cache.Gates) do
+                if g.part then exitPos = g.part.Position + Vector3.new(0, 5, 0); break end
+            end
+        end)
+        if not exitPos then return end
+        for i = 1, 10 do
+            if not GetRoot() then break end
+            pcall(function()
+                local ev = ReplicatedStorage:FindFirstChild("Remotes")
+                    :FindFirstChild("Game"):FindFirstChild("PlayerActionEvent")
+                if ev and ev:IsA("RemoteEvent") then ev:FireServer("ESCAPED", 200) end
+            end)
+            if i == 1 then
+                pcall(function() root.CFrame = CFrame.new(exitPos) end)
+            end
+            task.wait(0.2)
+        end
+        VD.BEAT_Survivor = false
+    end)
+end
+
+-- ── Auto Attack (Killer) ──
+local function NEX_AutoAttack()
+    if not VD.AUTO_Attack or GetRole() ~= "Killer" then return end
+    local root = GetRoot(); if not root then return end
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= LocalPlayer and IsSurvivor(pl) and pl.Character then
+            local tr  = pl.Character:FindFirstChild("HumanoidRootPart")
+            local hum = pl.Character:FindFirstChildOfClass("Humanoid")
+            if tr and hum and hum.MaxHealth > 0 then
+                local pct = hum.Health / hum.MaxHealth
+                if pct > 0.25 and (tr.Position - root.Position).Magnitude <= VD.AUTO_AttackRange then
+                    pcall(function()
+                        local b = ReplicatedStorage:FindFirstChild("Remotes")
+                            :FindFirstChild("Attacks"):FindFirstChild("BasicAttack")
+                        if b then b:FireServer(false) end
+                    end)
+                    break
+                end
+            end
+        end
+    end
+end
+
+-- ── Hitbox Expand ──
+local OriginalHitboxSizes = {}
+local function NEX_UpdateHitboxes()
+    local function restoreAll()
+        for pl, sz in pairs(OriginalHitboxSizes) do
+            if pl and pl.Character then
+                local r = pl.Character:FindFirstChild("HumanoidRootPart")
+                if r then r.Size = sz; r.Transparency = 1; r.CanCollide = true end
+            end
+        end
+        OriginalHitboxSizes = {}
+    end
+    if GetRole() ~= "Killer" or not VD.HITBOX_Enabled then restoreAll(); return end
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= LocalPlayer and IsSurvivor(pl) and pl.Character then
+            local root = pl.Character:FindFirstChild("HumanoidRootPart")
+            local hum  = pl.Character:FindFirstChildOfClass("Humanoid")
+            if root and hum and hum.Health > 0 then
+                if not OriginalHitboxSizes[pl] then OriginalHitboxSizes[pl] = root.Size end
+                local sz = VD.HITBOX_Size
+                root.Size = Vector3.new(sz, sz, sz)
+                root.CanCollide = false; root.Transparency = 0.7
+            elseif root and OriginalHitboxSizes[pl] then
+                root.Size = OriginalHitboxSizes[pl]
+                root.Transparency = 1; root.CanCollide = true
+                OriginalHitboxSizes[pl] = nil
+            end
+        end
+    end
+end
+
+-- ── Double Tap ──
+local LastDoubleTapTime = 0
+local function NEX_DoubleTap()
+    if not VD.KILLER_DoubleTap or GetRole() ~= "Killer" then return end
+    if tick() - LastDoubleTapTime < 0.5 then return end
+    pcall(function()
+        local ba = ReplicatedStorage:FindFirstChild("Remotes")
+            :FindFirstChild("Attacks"):FindFirstChild("BasicAttack")
+        if ba then
+            ba:FireServer(false); task.wait(0.05); ba:FireServer(false)
+            LastDoubleTapTime = tick()
+        end
+    end)
+end
+
+-- ── Infinite Lunge ──
+local function NEX_InfiniteLunge()
+    if not VD.KILLER_InfiniteLunge or GetRole() ~= "Killer" then return end
+    local root = GetRoot()
+    if root then
+        pcall(function()
+            root.Velocity = root.CFrame.LookVector * 100 + Vector3.new(0, 10, 0)
+        end)
+    end
+end
+
+-- ── Destroy Pallets ──
+local LastPalletDestroy = 0
+local function NEX_DestroyAllPallets()
+    if not VD.KILLER_DestroyPallets or GetRole() ~= "Killer" then return end
+    if tick() - LastPalletDestroy < 1.5 then return end
+    LastPalletDestroy = tick()
+    pcall(function()
+        local j = ReplicatedStorage:FindFirstChild("Remotes")
+            :FindFirstChild("Pallet"):FindFirstChild("Jason")
+        local dg = j and j:FindFirstChild("Destroy-Global")
+        local d  = j and j:FindFirstChild("Destroy")
+        if dg then pcall(function() dg:FireServer() end) end
+        if d then
+            for _, p in ipairs(NEX_Cache.Pallets) do
+                if p.model then task.spawn(function() pcall(function() d:FireServer(p.model) end) end) end
+            end
+        end
+    end)
+end
+
+-- ── Full Gen Break ──
+local LastGenBreak = 0
+local function NEX_FullGenBreak()
+    if not VD.KILLER_FullGenBreak or GetRole() ~= "Killer" then return end
+    if tick() - LastGenBreak < 0.8 then return end
+    LastGenBreak = tick()
+    pcall(function()
+        local be = ReplicatedStorage:FindFirstChild("Remotes")
+            :FindFirstChild("Generator"):FindFirstChild("BreakGenEvent")
+        if not be then return end
+        local map = workspace:FindFirstChild("Map")
+        if not map then return end
+        for _, obj in ipairs(map:GetDescendants()) do
+            if obj:IsA("BasePart") and obj.Name:find("GeneratorPoint") then
+                task.spawn(function() pcall(function() be:FireServer(obj) end) end)
+            end
+        end
+    end)
+end
+
+-- ── Auto Hook ──
+local IsAutoHooking = false
+local function NEX_AutoHook()
+    if not VD.KILLER_AutoHook or GetRole() ~= "Killer" then return end
+    if IsAutoHooking then return end
+    local root = GetRoot(); if not root then return end
+    local closestDowned, closestDist = nil, math.huge
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= LocalPlayer and IsSurvivor(pl) and pl.Character then
+            local tr  = pl.Character:FindFirstChild("HumanoidRootPart")
+            local hum = pl.Character:FindFirstChildOfClass("Humanoid")
+            if tr and hum then
+                local pct = (hum.MaxHealth > 0) and (hum.Health / hum.MaxHealth) or 0
+                if pct <= 0.25 and pct > 0 then
+                    local isHooked = false
+                    for _, h in ipairs(NEX_Cache.Hooks) do
+                        if h.part and (h.part.Position - tr.Position).Magnitude < 4.5 then
+                            isHooked = true; break
+                        end
+                    end
+                    if not isHooked then
+                        local d = (tr.Position - root.Position).Magnitude
+                        if d < closestDist then closestDist = d; closestDowned = tr end
+                    end
+                end
+            end
+        end
+    end
+    if closestDowned then
+        local closestHook, hd = nil, math.huge
+        for _, h in ipairs(NEX_Cache.Hooks) do
+            if h.part then
+                local d = (h.part.Position - closestDowned.Position).Magnitude
+                if d < hd then hd = d; closestHook = h end
+            end
+        end
+        if closestHook then
+            IsAutoHooking = true
+            task.spawn(function()
+                pcall(function()
+                    root.CFrame = CFrame.new(closestDowned.Position + Vector3.new(0, 3, 0), closestDowned.Position)
+                end)
+                task.wait(0.3)
+                pcall(function()
+                    local vim = game:GetService("VirtualInputManager")
+                    vim:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+                    task.wait(0.05)
+                    vim:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+                end)
+                task.wait(0.8)
+                if GetRoot() then
+                    pcall(function() root.CFrame = CFrame.new(closestHook.part.Position + Vector3.new(0, 3, 0)) end)
+                    task.wait(0.3)
+                    pcall(function()
+                        local ev = ReplicatedStorage:FindFirstChild("Remotes")
+                            :FindFirstChild("Carry"):FindFirstChild("HookEvent")
+                        if ev then
+                            local hp = closestHook.model and (
+                                closestHook.model:FindFirstChild("HookPoint") or
+                                closestHook.model:FindFirstChild("HookHitbox")
+                            ) or closestHook.part
+                            ev:FireServer(hp)
+                        end
+                    end)
+                end
+                task.wait(1); IsAutoHooking = false
+            end)
+        end
+    end
+end
+
+-- ── No Pallet Stun (metamethod) ──
+local NoPalletStunSetup = false
+local function SetupNoPalletStun()
+    if NoPalletStunSetup then return end; NoPalletStunSetup = true
+    pcall(function()
+        local j = ReplicatedStorage:FindFirstChild("Remotes")
+            :FindFirstChild("Pallet"):FindFirstChild("Jason")
+        local stun     = j and j:FindFirstChild("Stun")
+        local stunDrop = j and j:FindFirstChild("StunDrop")
+        if not stun then return end
+        local ok, mt = pcall(function() return getrawmetatable(game) end)
+        if ok and mt and setreadonly then
+            setreadonly(mt, false)
+            local old = mt.__namecall
+            mt.__namecall = newcclosure(function(self, ...)
+                if VD.KILLER_NoPalletStun and (self == stun or self == stunDrop) then
+                    return nil
+                end
+                return old(self, ...)
+            end)
+            setreadonly(mt, true)
+        end
+    end)
+end
+pcall(SetupNoPalletStun)
+
+-- ── Anti Blind (Flashlight) ──
+local AntiBlindSetup = false
+local function SetupAntiBlind()
+    if AntiBlindSetup then return end; AntiBlindSetup = true
+    pcall(function()
+        local fl = ReplicatedStorage:FindFirstChild("Remotes")
+            :FindFirstChild("Items"):FindFirstChild("Flashlight")
+        local gb = fl and fl:FindFirstChild("GotBlinded")
+        if not gb then return end
+        local ok, mt = pcall(function() return getrawmetatable(game) end)
+        if ok and mt and setreadonly then
+            setreadonly(mt, false)
+            local old = mt.__namecall
+            mt.__namecall = newcclosure(function(self, ...)
+                if not checkcaller() and VD.KILLER_AntiBlind and self == gb then
+                    if getnamecallmethod() == "FireServer" and GetRole() == "Killer" then
+                        return nil
+                    end
+                end
+                return old(self, ...)
+            end)
+            setreadonly(mt, true)
+        end
+    end)
+end
+pcall(SetupAntiBlind)
+
+-- ── No Slowdown ──
+local NoSlowdownSetup = false
+local function SetupNoSlowdown()
+    if NoSlowdownSetup then return end; NoSlowdownSetup = true
+    pcall(function()
+        local ok, mt = pcall(function() return getrawmetatable(game) end)
+        if ok and mt and setreadonly then
+            setreadonly(mt, false)
+            local old = mt.__namecall
+            mt.__namecall = newcclosure(function(self, ...)
+                if not checkcaller() and VD.KILLER_NoSlowdown and GetRole() == "Killer" then
+                    local method = getnamecallmethod()
+                    if method == "FireServer" then
+                        local name = pcall(function() return self.Name end) and self.Name or ""
+                        if name:find("Slow") or name:find("slow") then return nil end
+                    end
+                end
+                return old(self, ...)
+            end)
+            setreadonly(mt, true)
+        end
+    end)
+end
+pcall(SetupNoSlowdown)
+
+-- ── Beat Killer ──
+local function NEX_BeatGameKiller()
+    if not VD.BEAT_Killer or GetRole() ~= "Killer" then VD._KillerTarget = nil; return end
+    local root = GetRoot(); if not root then return end
+    local target = VD._KillerTarget
+    if target and target.Character then
+        local tr = target.Character:FindFirstChild("HumanoidRootPart")
+        local th = target.Character:FindFirstChildOfClass("Humanoid")
+        if not (tr and th and th.Health > 0) then VD._KillerTarget = nil; target = nil end
+    else
+        VD._KillerTarget = nil; target = nil
+    end
+    if not target then
+        local closest, closestDist = nil, math.huge
+        for _, pl in ipairs(Players:GetPlayers()) do
+            if pl ~= LocalPlayer and IsSurvivor(pl) and pl.Character then
+                local pr = pl.Character:FindFirstChild("HumanoidRootPart")
+                local ph = pl.Character:FindFirstChildOfClass("Humanoid")
+                if pr and ph and ph.Health > 0 then
+                    local d = (pr.Position - root.Position).Magnitude
+                    if d < closestDist then closestDist = d; closest = pl end
+                end
+            end
+        end
+        VD._KillerTarget = closest; target = closest
+    end
+    if not target or not target.Character then return end
+    local tr = target.Character:FindFirstChild("HumanoidRootPart")
+    local th = target.Character:FindFirstChildOfClass("Humanoid")
+    if not (tr and th and th.Health > 0) then VD._KillerTarget = nil; return end
+    pcall(function()
+        local dir = (root.Position - tr.Position).Unit
+        if dir.Magnitude ~= dir.Magnitude then dir = Vector3.new(1,0,0) end
+        root.CFrame = CFrame.new(tr.Position + dir * 3 + Vector3.new(0,1,0), tr.Position)
+        local ba = ReplicatedStorage:FindFirstChild("Remotes")
+            :FindFirstChild("Attacks"):FindFirstChild("BasicAttack")
+        if ba then ba:FireServer(false) end
+    end)
+end
+
+-- ── Fling ──
+local function NEX_FlingNearest()
+    if not VD.FLING_Enabled then return end
+    local root = GetRoot(); if not root then return end
+    local closest, closestDist = nil, math.huge
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= LocalPlayer and pl.Character then
+            local tr = pl.Character:FindFirstChild("HumanoidRootPart")
+            if tr then
+                local d = (tr.Position - root.Position).Magnitude
+                if d < closestDist then closestDist = d; closest = pl end
+            end
+        end
+    end
+    if closest and closest.Character then
+        local tr = closest.Character:FindFirstChild("HumanoidRootPart")
+        if tr then
+            local orig = root.CFrame
+            for _ = 1, 10 do
+                pcall(function()
+                    root.CFrame      = tr.CFrame
+                    root.Velocity    = Vector3.new(VD.FLING_Strength, VD.FLING_Strength/2, VD.FLING_Strength)
+                    root.RotVelocity = Vector3.new(9999, 9999, 9999)
+                end)
+                task.wait()
+            end
+            pcall(function() root.CFrame = orig; root.Velocity = Vector3.zero; root.RotVelocity = Vector3.zero end)
+        end
+    end
+end
+
+local function NEX_FlingAll()
+    if not VD.FLING_Enabled then return end
+    local root = GetRoot(); if not root then return end
+    local orig = root.CFrame
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= LocalPlayer and pl.Character then
+            local tr = pl.Character:FindFirstChild("HumanoidRootPart")
+            if tr then
+                for _ = 1, 5 do
+                    pcall(function()
+                        root.CFrame      = tr.CFrame
+                        root.Velocity    = Vector3.new(VD.FLING_Strength, VD.FLING_Strength/2, VD.FLING_Strength)
+                        root.RotVelocity = Vector3.new(9999, 9999, 9999)
+                    end)
+                    task.wait()
+                end
+            end
+        end
+    end
+    pcall(function() root.CFrame = orig; root.Velocity = Vector3.zero; root.RotVelocity = Vector3.zero end)
+end
+
+-- ── Improved Aimbot ──
+local AimState = { AimTarget = nil, AimHolding = false }
+local aimbotConnection = nil
+
+local function AimbotGetTarget(cam)
+    if not cam then return nil end
+    local root = GetRoot(); if not root then return nil end
+    local screenCenter = cam.ViewportSize / 2
+    local closest, closestDist = nil, math.huge
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= LocalPlayer and IsKiller(pl) and pl.Character then
+            local tr = pl.Character:FindFirstChild("HumanoidRootPart")
+            if tr then
+                local screen, onScreen = cam:WorldToViewportPoint(tr.Position)
+                if onScreen or screen.Z > 0 then
+                    local screenPos = Vector2.new(screen.X, screen.Y)
+                    local dist2D    = (screenPos - screenCenter).Magnitude
+                    if dist2D <= VD.AIM_FOV then
+                        local passVis = true
+                        if VD.AIM_VisCheck then
+                            local rp = RaycastParams.new()
+                            rp.FilterType = Enum.RaycastFilterType.Blacklist
+                            rp.FilterDescendantsInstances = { cam, LocalPlayer.Character, pl.Character }
+                            local ray = workspace:Raycast(cam.CFrame.Position, tr.Position - cam.CFrame.Position, rp)
+                            passVis = (ray == nil)
+                        end
+                        if passVis and dist2D < closestDist then
+                            closestDist = dist2D; closest = pl
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return closest
+end
+
+local function AimbotUpdate(cam)
+    if not VD.AIM_Enabled then AimState.AimTarget = nil; return end
+    if VD.AIM_UseRMB and not AimState.AimHolding then AimState.AimTarget = nil; return end
+    local target = AimbotGetTarget(cam)
+    AimState.AimTarget = target
+    if target and target.Character then
+        local bone = target.Character:FindFirstChild("Head") or
+                     target.Character:FindFirstChild("HumanoidRootPart")
+        if bone then
+            local pos = bone.Position
+            if VD.AIM_Predict then
+                local root = target.Character:FindFirstChild("HumanoidRootPart")
+                if root then pos = pos + root.AssemblyLinearVelocity * 0.1 end
+            end
+            local cur    = cam.CFrame
+            local smooth = math.clamp(VD.AIM_Smooth or 0.3, 0.05, 1)
+            pcall(function() cam.CFrame = cur:Lerp(CFrame.new(cur.Position, pos), smooth) end)
+        end
+    end
+end
+
+-- Spear Aimbot (Veil Killer)
+local function UpdateSpearAim()
+    if not VD.SPEAR_Aimbot or GetRole() ~= "Killer" then return end
+    local root = GetRoot(); if not root then return end
+    local closest, closestDist = nil, math.huge
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= LocalPlayer and IsSurvivor(pl) and pl.Character then
+            local tr = pl.Character:FindFirstChild("HumanoidRootPart")
+            if tr then
+                local d = (tr.Position - root.Position).Magnitude
+                if d < closestDist then closestDist = d; closest = pl end
+            end
+        end
+    end
+    if closest and closest.Character then
+        local tr = closest.Character:FindFirstChild("HumanoidRootPart")
+        if tr then
+            local startPos = root.Position + Vector3.new(0, 2, 0)
+            local dist     = (tr.Position - startPos).Magnitude
+            local t        = dist / (VD.SPEAR_Speed or 100)
+            local drop     = 0.5 * (VD.SPEAR_Gravity or 50) * t * t
+            local aimPos   = tr.Position + Vector3.new(0, drop, 0)
+            local cam = workspace.CurrentCamera
+            if cam then pcall(function() cam.CFrame = CFrame.new(cam.CFrame.Position, aimPos) end) end
+        end
+    end
+end
+
+-- FOV Circle (defined later in AIMBOT section)
+
+-- RMB input for aimbot
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        AimState.AimHolding = true
+    end
+end)
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        AimState.AimHolding = false
+    end
+end)
+
+-- ── Radar ──
+local Radar = {
+    bg = nil, circleBg = nil, border = nil, circleBorder = nil,
+    cross1 = nil, cross2 = nil, center = nil,
+    dots = {}, objectDots = {}, palletSquares = {}
+}
+
+if DrawingAvailable then
+    Radar.bg           = SafeDrawing("Square")
+    Radar.circleBg     = SafeDrawing("Circle")
+    Radar.border       = SafeDrawing("Square")
+    Radar.circleBorder = SafeDrawing("Circle")
+    Radar.cross1       = SafeDrawing("Line")
+    Radar.cross2       = SafeDrawing("Line")
+    Radar.center       = SafeDrawing("Triangle")
+    if Radar.bg then Radar.bg.Filled = true; Radar.bg.Color = Color3.fromRGB(20,20,20); Radar.bg.Transparency = 0.8 end
+    if Radar.circleBg then Radar.circleBg.Filled = true; Radar.circleBg.Color = Color3.fromRGB(20,20,20); Radar.circleBg.Transparency = 0.8; Radar.circleBg.NumSides = 64 end
+    if Radar.border then Radar.border.Filled = false; Radar.border.Color = Color3.fromRGB(255,65,65); Radar.border.Thickness = 2 end
+    if Radar.circleBorder then Radar.circleBorder.Filled = false; Radar.circleBorder.Color = Color3.fromRGB(255,65,65); Radar.circleBorder.Thickness = 2; Radar.circleBorder.NumSides = 64 end
+    if Radar.cross1 then Radar.cross1.Color = Color3.fromRGB(40,40,40); Radar.cross1.Thickness = 1 end
+    if Radar.cross2 then Radar.cross2.Color = Color3.fromRGB(40,40,40); Radar.cross2.Thickness = 1 end
+    if Radar.center then Radar.center.Filled = true; Radar.center.Color = Color3.fromRGB(0,255,0) end
+    for _ = 1, 80 do
+        local d = SafeDrawing("Triangle")
+        if d then d.Filled = true; d.Visible = false end
+        table.insert(Radar.dots, d)
+    end
+    for _ = 1, 80 do
+        local d = SafeDrawing("Circle")
+        if d then d.Filled = true; d.Visible = false; d.NumSides = 16 end
+        table.insert(Radar.objectDots, d)
+    end
+    for _ = 1, 80 do
+        local d = SafeDrawing("Square")
+        if d then d.Filled = true; d.Visible = false end
+        table.insert(Radar.palletSquares, d)
+    end
+end
+
+local function Radar_hideAll()
+    if not DrawingAvailable then return end
+    if Radar.bg then Radar.bg.Visible = false end
+    if Radar.circleBg then Radar.circleBg.Visible = false end
+    if Radar.border then Radar.border.Visible = false end
+    if Radar.circleBorder then Radar.circleBorder.Visible = false end
+    if Radar.center then Radar.center.Visible = false end
+    if Radar.cross1 then Radar.cross1.Visible = false end
+    if Radar.cross2 then Radar.cross2.Visible = false end
+    for _, d in pairs(Radar.dots) do if d then d.Visible = false end end
+    for _, d in pairs(Radar.objectDots) do if d then d.Visible = false end end
+    for _, d in pairs(Radar.palletSquares) do if d then d.Visible = false end end
+end
+
+local function Radar_step(cam)
+    if not DrawingAvailable then return end
+    if not VD.RADAR_Enabled then Radar_hideAll(); return end
+    local size   = VD.RADAR_Size
+    local vp     = cam.ViewportSize
+    local pos    = Vector2.new(vp.X - size - 20, 20)
+    local center = pos + Vector2.new(size/2, size/2)
+    if VD.RADAR_Circle then
+        if Radar.bg then Radar.bg.Visible = false end
+        if Radar.border then Radar.border.Visible = false end
+        if Radar.circleBg then Radar.circleBg.Position = center; Radar.circleBg.Radius = size/2; Radar.circleBg.Visible = true end
+        if Radar.circleBorder then Radar.circleBorder.Position = center; Radar.circleBorder.Radius = size/2; Radar.circleBorder.Visible = true end
+    else
+        if Radar.circleBg then Radar.circleBg.Visible = false end
+        if Radar.circleBorder then Radar.circleBorder.Visible = false end
+        if Radar.bg then Radar.bg.Position = pos; Radar.bg.Size = Vector2.new(size,size); Radar.bg.Visible = true end
+        if Radar.border then Radar.border.Position = pos; Radar.border.Size = Vector2.new(size,size); Radar.border.Visible = true end
+    end
+    if Radar.cross1 then Radar.cross1.From = Vector2.new(center.X, pos.Y+10); Radar.cross1.To = Vector2.new(center.X, pos.Y+size-10); Radar.cross1.Visible = true end
+    if Radar.cross2 then Radar.cross2.From = Vector2.new(pos.X+10, center.Y); Radar.cross2.To = Vector2.new(pos.X+size-10, center.Y); Radar.cross2.Visible = true end
+    local myRoot = GetRoot()
+    if not myRoot then Radar_hideAll(); return end
+    local myAngle = math.atan2(-cam.CFrame.LookVector.X, -cam.CFrame.LookVector.Z)
+    local cosA, sinA = math.cos(myAngle), math.sin(myAngle)
+    local scale = (size/2 - 10) / 150
+    local maxD  = size/2 - 8
+    local function worldToRadar(px, pz)
+        local rx, rz = px - myRoot.Position.X, pz - myRoot.Position.Z
+        local d2 = math.sqrt(rx*rx + rz*rz)
+        if d2 >= 150 then return nil end
+        local rx2 = rx*cosA - rz*sinA
+        local rz2 = rx*sinA + rz*cosA
+        local rdx, rdy = rx2*scale, rz2*scale
+        local rlen = math.sqrt(rdx*rdx + rdy*rdy)
+        if rlen > maxD then rdx = rdx/rlen*maxD; rdy = rdy/rlen*maxD end
+        return center + Vector2.new(rdx, rdy)
+    end
+    local idx, objIdx, pIdx = 1, 1, 1
+    if VD.RADAR_Killer then
+        for _, pl in ipairs(Players:GetPlayers()) do
+            if pl ~= LocalPlayer and IsKiller(pl) and pl.Character then
+                local r = pl.Character:FindFirstChild("HumanoidRootPart")
+                if r and idx <= #Radar.dots then
+                    local dp = worldToRadar(r.Position.X, r.Position.Z)
+                    if dp then
+                        local d = Radar.dots[idx]
+                        if d then d.PointA=dp+Vector2.new(0,-5); d.PointB=dp+Vector2.new(-3,3); d.PointC=dp+Vector2.new(3,3); d.Color=Color3.fromRGB(255,65,65); d.Visible=true end
+                        idx = idx + 1
+                    end
+                end
+            end
+        end
+    end
+    if VD.RADAR_Survivor then
+        for _, pl in ipairs(Players:GetPlayers()) do
+            if pl ~= LocalPlayer and IsSurvivor(pl) and pl.Character then
+                local r = pl.Character:FindFirstChild("HumanoidRootPart")
+                if r and idx <= #Radar.dots then
+                    local dp = worldToRadar(r.Position.X, r.Position.Z)
+                    if dp then
+                        local d = Radar.dots[idx]
+                        if d then d.PointA=dp+Vector2.new(0,-5); d.PointB=dp+Vector2.new(-3,3); d.PointC=dp+Vector2.new(3,3); d.Color=Color3.fromRGB(65,220,130); d.Visible=true end
+                        idx = idx + 1
+                    end
+                end
+            end
+        end
+    end
+    if VD.RADAR_Generator then
+        for _, gen in ipairs(NEX_Cache.Generators) do
+            if gen.part and objIdx <= #Radar.objectDots then
+                local dp = worldToRadar(gen.part.Position.X, gen.part.Position.Z)
+                if dp then
+                    local d = Radar.objectDots[objIdx]
+                    if d then d.Position=dp; d.Radius=3; d.Color=Color3.fromRGB(255,180,50); d.Visible=true end
+                    objIdx = objIdx + 1
+                end
+            end
+        end
+    end
+    if VD.RADAR_Pallet then
+        for _, p in ipairs(NEX_Cache.Pallets) do
+            if p.part and pIdx <= #Radar.palletSquares then
+                local dp = worldToRadar(p.part.Position.X, p.part.Position.Z)
+                if dp then
+                    local sq = Radar.palletSquares[pIdx]
+                    if sq then sq.Position=dp-Vector2.new(2.5,2.5); sq.Size=Vector2.new(5,5); sq.Color=Color3.fromRGB(220,180,100); sq.Visible=true end
+                    pIdx = pIdx + 1
+                end
+            end
+        end
+    end
+    for i = idx, #Radar.dots do if Radar.dots[i] then Radar.dots[i].Visible = false end end
+    for i = objIdx, #Radar.objectDots do if Radar.objectDots[i] then Radar.objectDots[i].Visible = false end end
+    for i = pIdx, #Radar.palletSquares do if Radar.palletSquares[i] then Radar.palletSquares[i].Visible = false end end
+    if Radar.center then
+        Radar.center.PointA = center+Vector2.new(0,-8)
+        Radar.center.PointB = center+Vector2.new(-4,4)
+        Radar.center.PointC = center+Vector2.new(4,4)
+        Radar.center.Visible = true
+    end
+end
+
+-- ── Main feature loop ──
+task.spawn(function()
+    while not VD.Destroyed do
+        pcall(NEX_AutoParry)
+        pcall(NEX_AutoWiggle)
+        pcall(NEX_AutoAttack)
+        pcall(NEX_UpdateHitboxes)
+        pcall(NEX_DestroyAllPallets)
+        pcall(NEX_FullGenBreak)
+        pcall(NEX_DoubleTap)
+        pcall(NEX_InfiniteLunge)
+        pcall(NEX_TeleportAway)
+        pcall(NEX_BeatGameSurvivor)
+        pcall(NEX_BeatGameKiller)
+        pcall(NEX_AutoHook)
+        task.wait(0.12)
+    end
+end)
+
+-- ── RenderStepped for aimbot + radar ──
+game:GetService("RunService").RenderStepped:Connect(function()
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    pcall(AimbotUpdate, cam)
+    pcall(UpdateSpearAim)
+    pcall(Radar_step, cam)
+end)
 -- Toggle values
 local ESPSURVIVOR  = false
 local ESPMURDER    = false
@@ -278,6 +1271,13 @@ local Config = {
         Bone      = "body",               -- "head" | "body"
         FOV       = 120,                  -- radius pixel dari tengah layar
         Range     = 150,                  -- studs max
+    },
+    SilentAim = {
+        Enabled   = false,
+        Bone      = "body",               -- "head" | "body"
+        FOV       = 200,                  -- radius pixel dari tengah layar
+        Range     = 80,                   -- studs max
+        TeamCheck = true,                 -- skip teammate
     },
     AutoFeatures = {
         AutoAttack  = false,
@@ -676,19 +1676,34 @@ local function setFPSCounter(on)
 end
 
 -- ============================================================
--- MOONWALK  (dari VD v17 — lock badan ikut kamera)
+-- MOONWALK  (v18 fix — AutoRotate=false + RenderStepped override)
+-- RenderStepped jalan SETELAH physics, jadi tidak bisa ditimpa
+-- analog/movement controller lagi. AutoRotate=false mencegah
+-- Roblox reset rotasi saat analog digerakkan.
 -- ============================================================
 local function startMoonwalk()
-    if moonwalkConn then moonwalkConn:Disconnect() end
-    moonwalkConn = game:GetService("RunService").Heartbeat:Connect(function()
+    if moonwalkConn then moonwalkConn:Disconnect(); moonwalkConn = nil end
+    -- Matikan AutoRotate supaya analog tidak reset arah badan
+    local c0 = LocalPlayer.Character
+    if c0 then
+        local hum0 = c0:FindFirstChildOfClass("Humanoid")
+        if hum0 then hum0.AutoRotate = false end
+    end
+    -- RenderStepped = setelah physics → override tidak bisa dilawan analog
+    moonwalkConn = game:GetService("RunService").RenderStepped:Connect(function()
         local c = LocalPlayer.Character; if not c then return end
         local hrp = c:FindFirstChild("HumanoidRootPart"); if not hrp then return end
-        local camFlat = workspace.CurrentCamera.CFrame.LookVector * Vector3.new(1,0,1)
-        if camFlat.Magnitude > 0.001 then
-            hrp.CFrame = CFrame.new(hrp.Position, hrp.Position + camFlat.Unit)
+        local hum = c:FindFirstChildOfClass("Humanoid")
+        -- Pastikan AutoRotate tetap off tiap frame (game bisa reset-nya)
+        if hum and hum.AutoRotate then hum.AutoRotate = false end
+        local camLook = workspace.CurrentCamera.CFrame.LookVector
+        local flat = Vector3.new(camLook.X, 0, camLook.Z)
+        if flat.Magnitude > 0.001 then
+            hrp.CFrame = CFrame.new(hrp.Position, hrp.Position + flat.Unit)
         end
     end)
 end
+
 local function stopMoonwalk()
     if moonwalkConn then moonwalkConn:Disconnect(); moonwalkConn = nil end
     local c = LocalPlayer.Character
@@ -714,24 +1729,142 @@ local function stopGodMode()
 end
 
 -- ============================================================
--- AIMBOT  (dari VD v17 — screen-space FOV + range check)
+-- AIMBOT  (FOV circle fix + Silent Aim)
 -- ============================================================
 local fovCircle = nil
+local fovUpdateConn = nil
+
 local function drawFOVCircle(radius)
-    pcall(function()
-        if fovCircle then fovCircle:Remove(); fovCircle = nil end
-        if not radius or radius <= 0 then return end
-        if not rawget(_G, "Drawing") then return end
-        fovCircle            = Drawing.new("Circle")
-        fovCircle.Visible    = true
-        fovCircle.Radius     = radius
-        fovCircle.Color      = Color3.fromRGB(232, 137, 12)
-        fovCircle.Thickness  = 1
-        fovCircle.Filled     = false
-        fovCircle.NumSides   = 64
-        local vp             = workspace.CurrentCamera.ViewportSize
-        fovCircle.Position   = Vector2.new(vp.X / 2, vp.Y / 2)
+    -- Hentikan loop lama & hapus circle lama
+    if fovUpdateConn then fovUpdateConn:Disconnect(); fovUpdateConn = nil end
+    pcall(function() if fovCircle then fovCircle:Remove(); fovCircle = nil end end)
+    if not radius or radius <= 0 then return end
+
+    -- Langsung coba buat circle; kalau Drawing tidak support → warn saja
+    local ok = pcall(function()
+        fovCircle           = Drawing.new("Circle")
+        fovCircle.Radius    = radius
+        fovCircle.Color     = Color3.fromRGB(168, 85, 247)
+        fovCircle.Thickness = 2
+        fovCircle.Filled    = false
+        fovCircle.NumSides  = 64
+        -- Set posisi LANGSUNG supaya langsung kelihatan
+        local vp = workspace.CurrentCamera.ViewportSize
+        fovCircle.Position = Vector2.new(vp.X / 2, vp.Y / 2)
+        fovCircle.Visible  = true
     end)
+    if not ok then
+        warn("[VD] Drawing.new gagal — executor mungkin tidak support Drawing API")
+        fovCircle = nil
+        return
+    end
+    -- Update posisi tiap frame supaya tetap di tengah saat rotate
+    fovUpdateConn = game:GetService("RunService").RenderStepped:Connect(function()
+        if not fovCircle then return end
+        pcall(function()
+            local vp = workspace.CurrentCamera.ViewportSize
+            fovCircle.Position = Vector2.new(vp.X / 2, vp.Y / 2)
+        end)
+    end)
+end
+
+-- ─── SILENT AIM ──────────────────────────────────────────────
+-- Intercept FireServer → ganti arah tembak ke target terdekat
+-- Cara kerja: hookmetamethod tangkap semua :FireServer call,
+-- kalau nama remote mengandung kata serangan → swap argumen arah
+local silentAimHook   = nil
+local silentAimActive = false
+local SILENT_AIM_RANGE = 80  -- studs
+
+local function getNearestEnemy()
+    local myChar = LocalPlayer.Character; if not myChar then return nil end
+    local myHRP  = myChar:FindFirstChild("HumanoidRootPart"); if not myHRP then return nil end
+    local cam    = workspace.CurrentCamera
+    local vp     = cam.ViewportSize
+    local cx, cy = vp.X / 2, vp.Y / 2
+    local range  = Config.SilentAim.Range or SILENT_AIM_RANGE
+    local fovR   = Config.SilentAim.FOV or 200
+    local best, bestD = nil, fovR
+
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= LocalPlayer and pl.Character then
+            -- team check
+            local skipTeam = false
+            if Config.SilentAim.TeamCheck then
+                local myTeam = LocalPlayer.Team
+                if pl.Team and myTeam and pl.Team == myTeam then
+                    skipTeam = true
+                end
+            end
+            if not skipTeam then
+                local bone
+                if Config.SilentAim.Bone == "head" then
+                    bone = pl.Character:FindFirstChild("Head")
+                end
+                bone = bone or pl.Character:FindFirstChild("UpperTorso")
+                           or pl.Character:FindFirstChild("Torso")
+                           or pl.Character:FindFirstChild("HumanoidRootPart")
+                if bone then
+                    local studs = (bone.Position - myHRP.Position).Magnitude
+                    if studs <= range then
+                        local pos, onScreen = cam:WorldToViewportPoint(bone.Position)
+                        if onScreen then
+                            local screenDist = math.sqrt((pos.X-cx)^2 + (pos.Y-cy)^2)
+                            if screenDist < bestD then bestD = screenDist; best = bone end
+                        end
+                    end
+                end
+            end -- end if not skipTeam
+        end
+    end
+    return best, bestD
+end
+
+-- Daftar kata di nama remote yang mau di-intercept
+local ATTACK_KEYWORDS = {"attack", "Attack", "BasicAttack", "Spearthrow", "spear", "Throw", "shoot", "Shoot"}
+
+local function startSilentAim()
+    if not rawget(_G, "hookmetamethod") then
+        warn("[VD] hookmetamethod tidak tersedia — silent aim tidak bisa jalan")
+        return
+    end
+    silentAimActive = true
+    silentAimHook = hookmetamethod(game, "__namecall", function(self, ...)
+        local method = getnamecallmethod()
+        if method == "FireServer" and silentAimActive then
+            -- Cek apakah remote ini adalah remote serangan
+            local name = pcall(function() return self.Name end) and self.Name or ""
+            local isAttack = false
+            for _, kw in ipairs(ATTACK_KEYWORDS) do
+                if name:find(kw) then isAttack = true; break end
+            end
+            if isAttack then
+                local tHRP, dist = getNearestEnemy()
+                if tHRP then
+                    local myHRP = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                    if myHRP then
+                        local dir = (tHRP.Position - myHRP.Position).Unit
+                        -- Swap argumen: replace Vector3/direction args dengan arah ke target
+                        local args = {...}
+                        for i, v in ipairs(args) do
+                            if typeof(v) == "Vector3" then
+                                -- Ganti vector pertama yang ketemu (biasanya arah tembak)
+                                args[i] = Vector3.new(dir.X, dir.Y, dir.Z)
+                                break
+                            end
+                        end
+                        return self[method](self, table.unpack(args))
+                    end
+                end
+            end
+        end
+        return self[method](self, ...)
+    end)
+end
+
+local function stopSilentAim()
+    silentAimActive = false
+    -- Hook tetap terpasang tapi silentAimActive = false jadi bypass dimatikan
 end
 
 local function getAimPart(char)
@@ -764,10 +1897,8 @@ local function startAimbot()
             if pl ~= LocalPlayer and pl.Character and not isTeammate(pl) then
                 local hrp = pl.Character:FindFirstChild("HumanoidRootPart")
                 if hrp then
-                    -- range check (studs)
                     local studs = (hrp.Position - myHRP.Position).Magnitude
                     if studs <= Config.Aimbot.Range then
-                        -- screen-space FOV check
                         local pos, onScreen = cam:WorldToViewportPoint(hrp.Position)
                         if onScreen then
                             local screenDist = math.sqrt((pos.X-cx)^2 + (pos.Y-cy)^2)
@@ -793,6 +1924,7 @@ end
 
 local function stopAimbot()
     if aimConn then aimConn:Disconnect(); aimConn = nil end
+    if fovUpdateConn then fovUpdateConn:Disconnect(); fovUpdateConn = nil end
     pcall(function()
         if fovCircle then fovCircle:Remove(); fovCircle = nil end
     end)
@@ -1024,32 +2156,76 @@ EspTab:Toggle({Title="Enable ESP", Value=false, Callback=function(v)
 end})
 
 EspTab:Section({ Title = "Esp Role", Icon = "user" })
-EspTab:Toggle({Title="ESP Survivor", Value=false, Callback=function(v) espSurvivor=v end})
-EspTab:Toggle({Title="ESP Killer", Value=false, Callback=function(v) espMurder=v end})
+EspTab:Toggle({
+    Title = "ESP Survivor",
+    Description  = "Tampilkan highlight & info Survivor",
+    Value = false,
+    Callback = function(v) pcall(function() espSurvivor = v end) end
+})
+EspTab:Toggle({
+    Title = "ESP Killer",
+    Description  = "Tampilkan highlight & info Killer",
+    Value = false,
+    Callback = function(v) pcall(function() espMurder = v end) end
+})
 
 EspTab:Section({ Title = "Esp Engine", Icon = "biceps-flexed" })
-EspTab:Toggle({Title="ESP Generator", Value=false, Callback=function(v) espGenerator=v end})
-EspTab:Toggle({Title="ESP Gate", Value=false, Callback=function(v) espGate=v end})
+EspTab:Toggle({
+    Title = "ESP Generator",
+    Description  = "Tampilkan highlight generator di map",
+    Value = false,
+    Callback = function(v) pcall(function() espGenerator = v end) end
+})
+EspTab:Toggle({
+    Title = "ESP Gate",
+    Description  = "Tampilkan highlight pintu gerbang",
+    Value = false,
+    Callback = function(v) pcall(function() espGate = v end) end
+})
 
 EspTab:Section({ Title = "Esp Object", Icon = "package" })
-EspTab:Toggle({Title="ESP Pallet", Value=false, Callback=function(v) espPallet=v end})
-EspTab:Toggle({Title="ESP Hook", Value=false, Callback=function(v) espHook=v end})
-EspTab:Toggle({Title="ESP Window", Value=false, Callback=function(v)
-    espWindowEnabled=v
-    updateWindowESP()
-end})
+EspTab:Toggle({
+    Title = "ESP Pallet",
+    Description  = "Tampilkan highlight pallet",
+    Value = false,
+    Callback = function(v) pcall(function() espPallet = v end) end
+})
+EspTab:Toggle({
+    Title = "ESP Hook",
+    Description  = "Tampilkan highlight hook",
+    Value = false,
+    Callback = function(v) pcall(function() espHook = v end) end
+})
+EspTab:Toggle({
+    Title = "ESP Window",
+    Description  = "Tampilkan highlight jendela",
+    Value = false,
+    Callback = function(v)
+        pcall(function()
+            espWindowEnabled = v
+            updateWindowESP()
+        end)
+    end
+})
 
 EspTab:Section({ Title = "Esp Event", Icon = "candy" })
-EspTab:Toggle({Title="ESP Pumkin", Value=false, Callback=function(v)
-    espPumkin=v
-    updatePumkinESP()
-end})
+EspTab:Toggle({
+    Title = "ESP Pumkin",
+    Description  = "Tampilkan highlight labu event",
+    Value = false,
+    Callback = function(v)
+        pcall(function()
+            espPumkin = v
+            updatePumkinESP()
+        end)
+    end
+})
 
 EspTab:Section({ Title = "Esp Settings", Icon = "settings" })
-EspTab:Toggle({Title="Show Name", Value=ShowName, Callback=function(v) ShowName=v end})
-EspTab:Toggle({Title="Show Distance", Value=ShowDistance, Callback=function(v) ShowDistance=v end})
-EspTab:Toggle({Title="Show Health", Value=ShowHP, Callback=function(v) ShowHP=v end})
-EspTab:Toggle({Title="Show Highlight", Value=ShowHighlight, Callback=function(v) ShowHighlight=v end})
+EspTab:Toggle({Title="Show Name",      Description="Tampilkan nama player", Value=ShowName,      Callback=function(v) pcall(function() ShowName=v end) end})
+EspTab:Toggle({Title="Show Distance",  Description="Tampilkan jarak",       Value=ShowDistance,  Callback=function(v) pcall(function() ShowDistance=v end) end})
+EspTab:Toggle({Title="Show Health",    Description="Tampilkan bar HP",       Value=ShowHP,        Callback=function(v) pcall(function() ShowHP=v end) end})
+EspTab:Toggle({Title="Show Highlight", Description="Tampilkan highlight box",Value=ShowHighlight, Callback=function(v) pcall(function() ShowHighlight=v end) end})
 
 -- ── ESP SETTINGS (Config-based) ─────────────────────────────────
 EspTab:Section({ Title = "Esp Settings (Pro)", Icon = "sliders-horizontal" })
@@ -1099,6 +2275,126 @@ EspTab:Slider({
     Value = { Min=10, Max=200, Default=100 },
     Step = 10,
     Callback = function(v) Config.Performance.MaxESPObjects = v end
+})
+
+-- ── ESP COLOR PICKER ─────────────────────────────────────────────
+EspTab:Section({ Title = "ESP Color Picker", Icon = "palette" })
+
+EspTab:Colorpicker({
+    Title   = "Warna ESP Survivor",
+    Description    = "Ubah warna highlight & label Survivor",
+    Default = Color3.fromRGB(0, 0, 255),
+    Transparency = 0,
+    Callback = function(v)
+        pcall(function()
+            COLOR_SURVIVOR = v
+            -- Update semua ESP survivor yang sudah ada
+            for obj, data in pairs(espObjects) do
+                local pl = Players:GetPlayerFromCharacter(obj)
+                if pl then
+                    local team = pl.Team and pl.Team.Name:lower() or ""
+                    local isKiller = team:find("killer") or team:find("maniac")
+                    if not isKiller then
+                        if data.highlight then
+                            data.highlight.FillColor    = v
+                            data.highlight.OutlineColor = v
+                        end
+                        if data.nameLabel  then data.nameLabel.TextColor3  = v end
+                        if data.hpLabel    then data.hpLabel.TextColor3    = v end
+                        if data.distLabel  then data.distLabel.TextColor3  = v end
+                    end
+                end
+            end
+        end)
+    end
+})
+
+EspTab:Colorpicker({
+    Title   = "Warna ESP Killer",
+    Description    = "Ubah warna highlight & label Killer",
+    Default = Color3.fromRGB(255, 0, 0),
+    Transparency = 0,
+    Callback = function(v)
+        pcall(function()
+            COLOR_MURDERER = v
+            for obj, data in pairs(espObjects) do
+                local pl = Players:GetPlayerFromCharacter(obj)
+                if pl then
+                    local team = pl.Team and pl.Team.Name:lower() or ""
+                    local isKiller = team:find("killer") or team:find("maniac")
+                    if isKiller then
+                        if data.highlight then
+                            data.highlight.FillColor    = v
+                            data.highlight.OutlineColor = v
+                        end
+                        if data.nameLabel  then data.nameLabel.TextColor3  = v end
+                        if data.hpLabel    then data.hpLabel.TextColor3    = v end
+                        if data.distLabel  then data.distLabel.TextColor3  = v end
+                    end
+                end
+            end
+        end)
+    end
+})
+
+EspTab:Colorpicker({
+    Title   = "Warna ESP Generator",
+    Description    = "Warna highlight generator yang belum selesai",
+    Default = Color3.fromRGB(255, 255, 255),
+    Transparency = 0,
+    Callback = function(v)
+        pcall(function() COLOR_GENERATOR = v end)
+    end
+})
+
+EspTab:Colorpicker({
+    Title   = "Warna ESP Generator (Done)",
+    Description    = "Warna highlight generator yang sudah selesai",
+    Default = Color3.fromRGB(0, 255, 0),
+    Transparency = 0,
+    Callback = function(v)
+        pcall(function() COLOR_GENERATOR_DONE = v end)
+    end
+})
+
+EspTab:Colorpicker({
+    Title   = "Warna ESP Gate",
+    Description    = "Warna highlight pintu gerbang",
+    Default = Color3.fromRGB(255, 255, 255),
+    Transparency = 0,
+    Callback = function(v)
+        pcall(function() COLOR_GATE = v end)
+    end
+})
+
+EspTab:Colorpicker({
+    Title   = "Warna ESP Pallet",
+    Description    = "Warna highlight pallet",
+    Default = Color3.fromRGB(255, 255, 0),
+    Transparency = 0,
+    Callback = function(v)
+        pcall(function() COLOR_PALLET = v end)
+    end
+})
+
+EspTab:Colorpicker({
+    Title   = "Warna ESP Hook",
+    Description    = "Warna highlight hook di map",
+    Default = Color3.fromRGB(255, 0, 0),
+    Transparency = 0,
+    Callback = function(v)
+        pcall(function() COLOR_HOOK = v end)
+    end
+})
+
+EspTab:Colorpicker({
+    Title   = "Warna ESP Window",
+    Description    = "Warna highlight jendela",
+    Default = Color3.fromRGB(255, 165, 0),
+    Transparency = 0,
+    Callback = function(v)
+        pcall(function() COLOR_WINDOW = v end)
+    end
 })
 
 
@@ -1192,43 +2488,60 @@ MainTab:Toggle({
 -- ====================== AUTO GENERATOR ======================
 SurTab:Section({ Title = "Feature Survivor", Icon = "user" })
 
-local autoparry = false
-
+-- ── Auto Parry (v2.0 — fires actual Parrying Dagger remote with angle+raycast check) ──
 SurTab:Toggle({
-    Title = "Auto Parry (Under Fixing)",
-    Value = false,
-    Callback = function(v)
-        autoparry = v
-        if autoparry then
-            task.spawn(function()
-                local Players = game:GetService("Players")
-                local LocalPlayer = Players.LocalPlayer
-                local ReplicatedStorage = game:GetService("ReplicatedStorage")
-                local remote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Items"):WaitForChild("Parrying Dagger"):WaitForChild("parry")
+    Title       = "Auto Parry",
+    Description = "Deteksi killer dalam jangkauan + cek sudut → fire parry remote otomatis",
+    Value       = false,
+    Callback    = function(v) VD.AUTO_Parry = v end
+})
+SurTab:Slider({
+    Title = "Parry Range (studs)",
+    Value = { Min = 5, Max = 30, Default = 15 }, Step = 1,
+    Callback = function(v) VD.AUTO_ParryRange = v end
+})
+SurTab:Slider({
+    Title = "Parry Angle Max (°) — hadap killer dulu",
+    Value = { Min = 10, Max = 90, Default = 30 }, Step = 5,
+    Callback = function(v) VD.AUTO_ParrySensitivity = v end
+})
+SurTab:Slider({
+    Title = "Parry Cooldown (×0.1 detik)",
+    Value = { Min = 1, Max = 30, Default = 5 }, Step = 1,
+    Callback = function(v) VD.AUTO_ParryDelay = v * 0.1 end
+})
 
-                while autoparry do
-                    local char = LocalPlayer.Character
-                    local root = char and char:FindFirstChild("HumanoidRootPart")
-                    if root then
-                        for _, plr in ipairs(Players:GetPlayers()) do
-                            if plr ~= LocalPlayer and plr.Character then
-                                if plr.Character:FindFirstChild("Weapon") then
-                                    local targetRoot = plr.Character:FindFirstChild("HumanoidRootPart")
-                                    if targetRoot then
-                                        local dist = (root.Position - targetRoot.Position).Magnitude
-                                        if dist <= 10 then
-                                            remote:FireServer()
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                    task.wait(0.001)
-                end
-            end)
-        end
-    end
+SurTab:Section({ Title = "Auto Wiggle", Icon = "activity" })
+SurTab:Toggle({
+    Title = "Auto Wiggle (saat di-carry)",
+    Value = false,
+    Callback = function(v) VD.SURV_AutoWiggle = v end
+})
+
+SurTab:Section({ Title = "Survival Utility", Icon = "shield-check" })
+SurTab:Toggle({
+    Title = "No Fall Damage",
+    Value = false,
+    Callback = function(v) VD.SURV_NoFall = v end
+})
+SurTab:Toggle({
+    Title       = "Flee Killer (Auto TP Menjauh)",
+    Description = "TP ke tempat terjauh dari killer saat dia terlalu dekat",
+    Value       = false,
+    Callback    = function(v) VD.AUTO_TeleAway = v end
+})
+SurTab:Slider({
+    Title = "Flee Trigger Distance (studs)",
+    Value = { Min = 10, Max = 80, Default = 40 }, Step = 5,
+    Callback = function(v) VD.AUTO_TeleAwayDist = v end
+})
+
+SurTab:Section({ Title = "Beat Game (Survivor)", Icon = "trophy" })
+SurTab:Toggle({
+    Title       = "Beat Survivor (Auto Escape)",
+    Description = "TP ke exit gate dan fire ESCAPED event",
+    Value       = false,
+    Callback    = function(v) VD.BEAT_Survivor = v end
 })
 
 SurTab:Section({ Title = "Feature Object", Icon = "zap" })
@@ -1393,400 +2706,59 @@ SurTab:Toggle({
     end
 })
 
-SurTab:Section({ Title = "Feature Self Heal", Icon = "heart" })
+SurTab:Section({ Title = "Feature Heal", Icon = "cross" })
 
--- ═══════════════════════════════════════════════════════════════
--- SELF HEAL / AUTO REVIVE MODULE
--- Semua fungsi pakai local biasa, aman untuk semua executor
--- ═══════════════════════════════════════════════════════════════
-local SH = {
-    enabled = false,
-    threshold = 1,
-    conn = nil,
-    speedRunning = false,
-    _healEvent = nil,
-    _skillCheck = nil,
-}
+-- ════ SELF HEAL — Auto HP restore saat drop ════════════════
+-- HP drop ke threshold → set balik max + bangun dari knocked
+-- BEDA GodMode: GodMode TERUS set max (kebal total)
+-- Self Heal: hanya set max saat HP drop, lalu normal lagi
 
--- Helper: cari remote HealEvent (cached)
-local function getHealEvent()
-    if SH._healEvent then return SH._healEvent end
-    local ok, r = pcall(function()
-        return game:GetService("ReplicatedStorage"):WaitForChild("Remotes",5)
-            :WaitForChild("Healing",5):WaitForChild("HealEvent",5)
-    end)
-    if ok then SH._healEvent = r end
-    return SH._healEvent
-end
+local selfHealEnabled   = false
+local selfHealThreshold = 1      -- default 1 = hanya revive saat knocked (HP=0)
+local selfHealConn      = nil
 
--- Helper: cari remote SkillCheckResultEvent (cached)
-local function getSkillCheck()
-    if SH._skillCheck then return SH._skillCheck end
-    local ok, r = pcall(function()
-        return game:GetService("ReplicatedStorage"):WaitForChild("Remotes",5)
-            :WaitForChild("Healing",5):WaitForChild("SkillCheckResultEvent",5)
-    end)
-    if ok then SH._skillCheck = r end
-    return SH._skillCheck
-end
-
--- Helper: cek apakah knocked/dying
-local function isKnocked()
-    local char = LocalPlayer.Character
-    if not char then return false end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return false end
-    if hum.Health <= 0 then return true end
-    local state = hum:GetState()
-    if state == Enum.HumanoidStateType.FallingDown
-    or state == Enum.HumanoidStateType.PlatformStanding
-    or state == Enum.HumanoidStateType.Dead then
-        return true
-    end
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if root and root:GetAttribute("Crouchingserver") == true then
-        return true
-    end
-    return false
-end
-
--- Start Self Heal (Heartbeat: auto set HP + fire HealEvent)
 local function startSelfHeal()
-    if SH.conn then SH.conn:Disconnect() end
-    SH.conn = RunService.Heartbeat:Connect(function()
-        if not SH.enabled then return end
+    if selfHealConn then selfHealConn:Disconnect() end
+    selfHealConn = RunService.Heartbeat:Connect(function()
+        if not selfHealEnabled then return end
         local char = LocalPlayer.Character
         if not char then return end
         local hum = char:FindFirstChildOfClass("Humanoid")
         if not hum or hum.MaxHealth <= 0 then return end
-        if hum.Health <= SH.threshold then
-            -- Set HP lokal (supaya bangun di client)
+        if hum.Health <= selfHealThreshold then
             hum.Health = hum.MaxHealth
             pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-            -- Fire HealEvent ke server (supaya server tahu)
             pcall(function()
                 local hrp = char:FindFirstChild("HumanoidRootPart")
                 local rh = getHealEvent()
-                if rh and hrp then
-                    rh:FireServer(hrp, false)
-                    rh:FireServer(hrp, true)
-                end
-            end)
-            -- Auto-pass skill check
-            pcall(function()
-                local sk = getSkillCheck()
-                if sk then sk:FireServer("neutral", 0, char) end
-            end)
-            -- Fix knock state: remove Status object & Hurtbox
-            pcall(function()
-                local st = hum:FindFirstChild("Status")
-                if st then st:Destroy() end
-            end)
-            pcall(function()
-                local hrp = char:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    local clone = hrp:FindFirstChild("HRP_Clone")
-                    if clone then
-                        local hb = clone:FindFirstChild("Hurtbox")
-                        if hb then hb:Destroy() end
-                    end
-                end
-            end)
-            -- Remove knock attributes
-            pcall(function()
-                local hrp = char:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    hrp:SetAttribute("Crouchingserver", nil)
-                end
+                if rh and hrp then rh:FireServer(hrp, false) end
             end)
         end
     end)
 end
 
--- Stop Self Heal
 local function stopSelfHeal()
-    if SH.conn then SH.conn:Disconnect(); SH.conn = nil end
+    if selfHealConn then selfHealConn:Disconnect(); selfHealConn = nil end
 end
 
--- Self Heal Toggle
 SurTab:Toggle({
     Title = "Self Heal / Auto Revive",
-    Description = "HP drop -> langsung full + bangun + fire HealEvent ke server. Bisa kena damage, tidak kebal.",
+    Description  = "HP drop -> langsung full + bangun. Bisa kena damage, tidak kebal.",
     Value = false,
     Callback = function(v)
-        SH.enabled = v
+        selfHealEnabled = v
         if v then startSelfHeal() else stopSelfHeal() end
     end,
 })
 
 SurTab:Slider({
     Title = "Threshold HP (kapan heal aktif)",
-    Description = "1 = revive saja saat knocked | 50 = auto heal jika HP < 50",
+    Description  = "1 = revive saja saat knocked | 50 = auto heal jika HP < 50",
     Value = { Min = 1, Max = 100, Default = 1 },
     Step  = 1,
     Callback = function(v)
-        SH.threshold = v
+        selfHealThreshold = v
     end,
-})
-
--- ═══════════════════════════════════════════════════════════════
--- SPEED SELF REVIVE -- Continuous heal process selama 10 detik
--- ═══════════════════════════════════════════════════════════════
-SurTab:Button({
-    Title       = "Speed Self Revive (10 detik)",
-    Description = "Continuous heal process selama 10 detik. Gunakan saat KNOCKED! Bar PEMULIHAN harus penuh.",
-    Callback    = function()
-        if SH.speedRunning then return end
-        SH.speedRunning = true
-        task.spawn(function()
-            local char = LocalPlayer.Character
-            if not char then SH.speedRunning = false; return end
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            if not (hum and hrp) then SH.speedRunning = false; return end
-
-            WindUI:Notify({Title="Speed Revive", Content="Mulai proses heal 10 detik...", Duration=3, Icon="heart"})
-
-            -- Step 1: Stop heal dulu
-            pcall(function()
-                local rs = game:GetService("ReplicatedStorage")
-                local sh = rs:FindFirstChild("Remotes")
-                    and rs.Remotes:FindFirstChild("Healing")
-                    and rs.Remotes.Healing:FindFirstChild("Stophealing")
-                if sh then sh:FireServer() end
-            end)
-            task.wait(0.3)
-
-            -- Step 2: Get remotes
-            local rh = getHealEvent()
-            local sk = getSkillCheck()
-            if not rh then
-                WindUI:Notify({Title="Error", Content="HealEvent tidak ditemukan!", Duration=3, Icon="alert-circle"})
-                SH.speedRunning = false; return
-            end
-
-            -- Step 3: Fire HealEvent sekali untuk mulai
-            pcall(function() rh:FireServer(hrp, false) end)
-            task.wait(0.2)
-
-            -- Step 4: Continuous heal loop selama ~10 detik
-            for i = 1, 40 do
-                if not SH.speedRunning then break end
-                if not isKnocked() then break end
-
-                pcall(function() rh:FireServer(hrp, false) end)
-                pcall(function() rh:FireServer(hrp, true) end)
-
-                if sk then
-                    pcall(function() sk:FireServer("neutral", 0, char) end)
-                end
-
-                if i % 5 == 0 then
-                    pcall(function()
-                        local rs = game:GetService("ReplicatedStorage")
-                        local ca = rs:FindFirstChild("Remotes")
-                            and rs.Remotes:FindFirstChild("Mechanics")
-                            and rs.Remotes.Mechanics:FindFirstChild("ChangeAttribute")
-                        if ca then ca:FireServer("Crouchingserver", false) end
-                    end)
-                end
-
-                task.wait(0.25)
-            end
-
-            -- Step 5: Fix client state
-            pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
-            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-            pcall(function() hum.Health = hum.MaxHealth end)
-
-            -- Step 6: Destroy Status object
-            pcall(function()
-                local st = hum:FindFirstChild("Status")
-                if st then st:Destroy() end
-            end)
-
-            -- Step 7: Destroy Hurtbox
-            pcall(function()
-                local clone = hrp:FindFirstChild("HRP_Clone")
-                if clone then
-                    local hb = clone:FindFirstChild("Hurtbox")
-                    if hb then hb:Destroy() end
-                end
-            end)
-
-            WindUI:Notify({Title="Revive", Content="Proses heal selesai!", Duration=3, Icon="heart"})
-            SH.speedRunning = false
-        end)
-    end
-})
-
--- ═══════════════════════════════════════════════════════════════
--- INSTANT REVIVE -- Burst approach
--- ═══════════════════════════════════════════════════════════════
-SurTab:Button({
-    Title       = "Instant Revive (Burst)",
-    Description = "HealEvent 20x + SkillCheck 20x burst. Cepat tapi mungkin ga lengkap.",
-    Callback    = function()
-        pcall(function()
-            local char = LocalPlayer.Character
-            if not char then return end
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            if not hrp then return end
-
-            local rh = getHealEvent()
-            if rh then
-                for i = 1, 20 do
-                    pcall(function() rh:FireServer(hrp, false) end)
-                    pcall(function() rh:FireServer(hrp, true) end)
-                end
-            end
-
-            local sk = getSkillCheck()
-            if sk then
-                for i = 1, 20 do
-                    pcall(function() sk:FireServer("neutral", 0, char) end)
-                end
-            end
-
-            -- Fix client state
-            if hum then
-                pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
-                pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-                pcall(function() hum.Health = hum.MaxHealth end)
-                pcall(function()
-                    local st = hum:FindFirstChild("Status")
-                    if st then st:Destroy() end
-                end)
-            end
-
-            -- Destroy Hurtbox
-            pcall(function()
-                local clone = hrp:FindFirstChild("HRP_Clone")
-                if clone then
-                    local hb = clone:FindFirstChild("Hurtbox")
-                    if hb then hb:Destroy() end
-                end
-            end)
-        end)
-        WindUI:Notify({Title="Instant Revive", Content="Burst heal dikirim!", Duration=2, Icon="zap"})
-    end
-})
-
--- ═══════════════════════════════════════════════════════════════
--- DEBUG DUMP — Print character state ke console
--- ═══════════════════════════════════════════════════════════════
-SurTab:Button({
-    Title       = "Debug: Dump Character State",
-    Description = "Print HP, state, Status, Hurtbox ke console (F9)",
-    Callback    = function()
-        pcall(function()
-            local char = LocalPlayer.Character
-            if not char then print("[DUMP] Karakter tidak ada") return end
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            print("===== CHARACTER STATE DUMP =====")
-            print("HP: " .. (hum and tostring(hum.Health) or "nil"))
-            print("MaxHP: " .. (hum and tostring(hum.MaxHealth) or "nil"))
-            print("State: " .. (hum and tostring(hum:GetState()) or "nil"))
-
-            -- Status object
-            print("\n--- Humanoid.Status Object ---")
-            if hum then
-                local st = hum:FindFirstChild("Status")
-                if st then
-                    print("  Status found: " .. st.Name .. " (" .. st.ClassName .. ")")
-                    for _, child in ipairs(st:GetChildren()) do
-                        local val = ""
-                        pcall(function() val = tostring(child.Value) end)
-                        print("    " .. child.Name .. " = " .. val .. " (" .. child.ClassName .. ")")
-                    end
-                else
-                    print("  Status: NOT FOUND")
-                end
-            end
-
-            -- HRP_Clone / Hurtbox
-            print("\n--- HRP_Clone / Hurtbox ---")
-            local hrp = char:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                local clone = hrp:FindFirstChild("HRP_Clone")
-                if clone then
-                    print("  HRP_Clone found: " .. clone.ClassName)
-                    for _, child in ipairs(clone:GetChildren()) do
-                        print("    " .. child.Name .. " (" .. child.ClassName .. ")")
-                    end
-                else
-                    print("  HRP_Clone: NOT FOUND")
-                end
-            end
-
-            -- Attributes
-            print("\n--- HumanoidRootPart Attributes ---")
-            if hrp then
-                for _, attr in ipairs(hrp:GetAttributes()) do
-                    print("    Attr: " .. attr .. " = " .. tostring(hrp:GetAttribute(attr)))
-                end
-            end
-
-            print("\n--- Humanoid Attributes ---")
-            if hum then
-                for _, attr in ipairs(hum:GetAttributes()) do
-                    print("    Attr: " .. attr .. " = " .. tostring(hum:GetAttribute(attr)))
-                end
-            end
-
-            print("===== END DUMP =====")
-        end)
-    end
-})
-
--- ═══════════════════════════════════════════════════════════════
--- AUTO HEAL ORANG LAIN (bukan self-heal)
--- ═══════════════════════════════════════════════════════════════
-local autoHealEnabled = false
-SurTab:Toggle({
-    Title = "Auto Heal Other Players",
-    Description = "Auto heal survivor terdekat (bukan self-heal)",
-    Value = false,
-    Callback = function(v)
-        autoHealEnabled = v
-        if autoHealEnabled then
-            task.spawn(function()
-                while autoHealEnabled do
-                    local char = LocalPlayer.Character
-                    local root = char and char:FindFirstChild("HumanoidRootPart")
-                    if root then
-                        local closestTarget = nil
-                        local closestDist = Config.AutoFeatures.AttackRange
-                        for _, plr in ipairs(Players:GetPlayers()) do
-                            if plr ~= LocalPlayer and plr.Character then
-                                local targetRoot = plr.Character:FindFirstChild("HumanoidRootPart")
-                                if targetRoot then
-                                    local dist = (root.Position - targetRoot.Position).Magnitude
-                                    if dist <= closestDist then
-                                        closestDist = dist
-                                        closestTarget = plr
-                                    end
-                                end
-                            end
-                        end
-                        if closestTarget then
-                            pcall(function()
-                                local sk = game:GetService("ReplicatedStorage")
-                                    :FindFirstChild("Remotes")
-                                    and game:GetService("ReplicatedStorage").Remotes:FindFirstChild("Healing")
-                                    and game:GetService("ReplicatedStorage").Remotes.Healing:FindFirstChild("SkillCheckResultEvent")
-                                if sk then
-                                    sk:FireServer("success", 1, closestTarget.Character)
-                                end
-                            end)
-                        end
-                    end
-                    task.wait(0.5)
-                end
-            end)
-        end
-    end
 })
 
 SurTab:Section({ Title = "Feature Cheat", Icon = "bug" })
@@ -1907,7 +2879,7 @@ SurTab:Button({
                     repeat
                         if RootPart and THumanoid then
                             if BasePart.Velocity.Magnitude < 50 then
-                                Angle += 100
+                                Angle = Angle + 100
                                 FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
                                 task.wait()
                                 FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
@@ -2002,6 +2974,767 @@ SurTab:Button({
     Title = "Invisible (Skid by me)",
     Callback = function()
         loadstring(game:HttpGet("https://raw.githubusercontent.com/mabdu21/kjandsaddjadbhahayenajhsjbdwa/refs/heads/main/INV.lua"))()
+    end
+})
+
+-- ============================================================
+-- SURVIVOR REMOTES  — Fast Vault toggle, Stop Emote, Heal
+-- ============================================================
+SurTab:Section({ Title = "Vault / Window", Icon = "wind" })
+
+-- ─── Vault state & remotes ───────────────────────────────────
+local fastVaultEnabled    = false
+local instantVaultEnabled = false
+local vaultTouchConns     = {}
+local vaultMapConn        = nil
+local remWindowCache      = nil
+
+local function getWindowRemotes()
+    if remWindowCache then return remWindowCache end
+    local ok, r = pcall(function()
+        local rem = ReplicatedStorage
+            :WaitForChild("Remotes", 5)
+            :WaitForChild("Window", 5)
+        return {
+            fastVault     = rem:WaitForChild("fastvault", 5),
+            vaultEvent    = rem:WaitForChild("VaultEvent", 5),
+            vaultComplete = rem:WaitForChild("VaultCompleteEvent", 5),
+        }
+    end)
+    if ok then remWindowCache = r; return r end
+    return nil
+end
+
+local function getAllVaultTriggers()
+    local found = {}
+    local map = workspace:FindFirstChild("Map")
+    if not map then return found end
+    for _, v in ipairs(map:GetDescendants()) do
+        if v.Name == "VaultTrigger" and v:IsA("BasePart") then
+            table.insert(found, v)
+        end
+    end
+    return found
+end
+
+local function disconnectVaultConns()
+    for _, c in ipairs(vaultTouchConns) do pcall(function() c:Disconnect() end) end
+    vaultTouchConns = {}
+end
+
+local function hookOneVaultTrigger(trigger)
+    local conn = trigger.Touched:Connect(function(part)
+        if not (fastVaultEnabled or instantVaultEnabled) then return end
+        local char = LocalPlayer.Character
+        if not char then return end
+        -- cek apakah part yang touch adalah bagian karakter kita
+        local p = part
+        local isOurs = false
+        while p do
+            if p == char then isOurs = true; break end
+            p = p.Parent
+        end
+        if not isOurs then return end
+
+        local rems = getWindowRemotes()
+        if not rems then return end
+
+        if instantVaultEnabled then
+            pcall(function()
+                rems.vaultEvent:FireServer(trigger, true)
+                task.wait(0.03)
+                rems.vaultComplete:FireServer(trigger, false)
+            end)
+        else -- fastVaultEnabled
+            pcall(function()
+                rems.fastVault:FireServer(LocalPlayer)
+            end)
+        end
+    end)
+    table.insert(vaultTouchConns, conn)
+end
+
+local function startVaultHook()
+    disconnectVaultConns()
+    for _, t in ipairs(getAllVaultTriggers()) do
+        hookOneVaultTrigger(t)
+    end
+    -- tangkap VaultTrigger baru saat map loading
+    local map = workspace:FindFirstChild("Map")
+    if map then
+        if vaultMapConn then vaultMapConn:Disconnect() end
+        vaultMapConn = map.DescendantAdded:Connect(function(v)
+            if v.Name == "VaultTrigger" and v:IsA("BasePart")
+                and (fastVaultEnabled or instantVaultEnabled) then
+                task.wait(0.1)
+                hookOneVaultTrigger(v)
+            end
+        end)
+    end
+end
+
+local function stopVaultHook()
+    disconnectVaultConns()
+    if vaultMapConn then vaultMapConn:Disconnect(); vaultMapConn = nil end
+end
+
+SurTab:Toggle({
+    Title       = "Fast Vault  (auto saat lewat jendela)",
+    Description = "Saat karakter touch VaultTrigger → fastvault otomatis fire",
+    Value       = false,
+    Callback    = function(v)
+        fastVaultEnabled = v
+        if v then
+            instantVaultEnabled = false
+            startVaultHook()
+            WindUI:Notify({ Title="Vault", Content="Fast Vault aktif!", Duration=2, Icon="wind" })
+        else
+            if not instantVaultEnabled then stopVaultHook() end
+        end
+    end
+})
+
+SurTab:Toggle({
+    Title       = "Instant Vault  (skip seluruh animasi)",
+    Description = "Touch jendela → VaultEvent + VaultComplete langsung dikirim",
+    Value       = false,
+    Callback    = function(v)
+        instantVaultEnabled = v
+        if v then
+            fastVaultEnabled = false
+            startVaultHook()
+            WindUI:Notify({ Title="Vault", Content="Instant Vault aktif!", Duration=2, Icon="zap" })
+        else
+            if not fastVaultEnabled then stopVaultHook() end
+        end
+    end
+})
+
+-- ─── Stop Emote ───────────────────────────────────────────────
+SurTab:Section({ Title = "Emote", Icon = "smile" })
+
+SurTab:Button({
+    Title    = "Stop Emote",
+    Callback = function()
+        local ok, err = pcall(function()
+            ReplicatedStorage
+                :WaitForChild("Remotes", 5)
+                :WaitForChild("EmoteHandler", 5)
+                :FireServer("StopEmote")
+        end)
+        WindUI:Notify({
+            Title   = "Emote",
+            Content = ok and "Emote dihentikan!" or "Gagal: "..tostring(err),
+            Duration = 2, Icon = ok and "smile" or "alert-circle"
+        })
+    end
+})
+
+-- ─── Revive / Heal ───────────────────────────────────────────
+SurTab:Section({ Title = "Revive / Heal", Icon = "heart" })
+
+-- ══ REMOTE HELPERS (argumen dari RemoteSpy) ══════════════════
+-- HealEvent        → FireServer(HumanoidRootPart, bool)
+--   false = heal diri sendiri, true = heal orang lain
+-- SkillCheckResult → FireServer("neutral", 0, Character)
+-- SkillCheckEvent  → FireServer() — trigger skill check
+-- HealAnimRec      → FireServer() — advance heal animation
+-- Reset            → JANGAN dipakai — itu respawn/mati bukan revive!
+-- Stophealing      → FireServer() — stop heal process
+
+local remHealEvent = nil
+local function getHealEvent()
+    if remHealEvent then return remHealEvent end
+    local ok, r = pcall(function()
+        return ReplicatedStorage:WaitForChild("Remotes",5)
+            :WaitForChild("Healing",5):WaitForChild("HealEvent",5)
+    end)
+    if ok then remHealEvent = r end
+    return remHealEvent
+end
+
+local remSkillCheck = nil
+local function getSkillCheck()
+    if remSkillCheck then return remSkillCheck end
+    local ok, r = pcall(function()
+        return ReplicatedStorage:WaitForChild("Remotes",5)
+            :WaitForChild("Healing",5):WaitForChild("SkillCheckResultEvent",5)
+    end)
+    if ok then remSkillCheck = r end
+    return remSkillCheck
+end
+
+local remSkillCheckEvent = nil
+local function getSkillCheckEvent()
+    if remSkillCheckEvent then return remSkillCheckEvent end
+    local ok, r = pcall(function()
+        return ReplicatedStorage:WaitForChild("Remotes",5)
+            :WaitForChild("Healing",5):WaitForChild("SkillCheckEvent",5)
+    end)
+    if ok then remSkillCheckEvent = r end
+    return remSkillCheckEvent
+end
+
+local remHealAnimRec = nil
+local function getHealAnimRec()
+    if remHealAnimRec then return remHealAnimRec end
+    local ok, r = pcall(function()
+        return ReplicatedStorage:WaitForChild("Remotes",5)
+            :WaitForChild("Healing",5):WaitForChild("HealAnimRec",5)
+    end)
+    if ok then remHealAnimRec = r end
+    return remHealAnimRec
+end
+
+-- ══ CEK KNOCK STATE ════════════════════════════════════════════
+local function isKnocked()
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+    if hum.Health < 50 then return true end
+    local state = hum:GetState()
+    if state == Enum.HumanoidStateType.FallingDown
+    or state == Enum.HumanoidStateType.PlatformStanding
+    or state == Enum.HumanoidStateType.Dead then
+        return true
+    end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if root and root:GetAttribute("Crouchingserver") == true then
+        return true
+    end
+    return false
+end
+
+-- ══ 1. SPEED SELF REVIVE — Continuous heal process ═══════════
+-- MASALAH: Bar PEMULIHAN muncul tapi ga penuh karena butuh
+-- player lain yang heal terus-menerus sampai 100%
+-- SOLUSI: Fire HealEvent + SkillCheckResult BERKELANJUTAN
+-- selama ~10 detik, simulasi heal terus dari "orang lain"
+local speedReviveRunning = false
+local function doSpeedSelfRevive()
+    if speedReviveRunning then return end
+    speedReviveRunning = true
+
+    task.spawn(function()
+        local char = LocalPlayer.Character
+        if not char then speedReviveRunning = false; return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not (hum and hrp) then speedReviveRunning = false; return end
+
+        WindUI:Notify({Title="Speed Revive", Content="Mulai proses heal 10 detik...", Duration=3, Icon="heart"})
+        print("[REVIVE] Speed Self Revive dimulai")
+
+        -- Step 1: Stop heal dulu biar bersih
+        pcall(function()
+            local rem = ReplicatedStorage:FindFirstChild("Remotes")
+            local h = rem and rem:FindFirstChild("Healing")
+            local sh = h and h:FindFirstChild("Stophealing")
+            if sh then sh:FireServer() end
+        end)
+        task.wait(0.3)
+
+        -- Step 2: Mulai heal process (HealEvent hrp, false = self)
+        local rh = getHealEvent()
+        local sk = getSkillCheck()
+        local skEvt = getSkillCheckEvent()
+        local animRec = getHealAnimRec()
+
+        if not rh then
+            WindUI:Notify({Title="Error", Content="HealEvent tidak ditemukan!", Duration=3, Icon="alert-circle"})
+            speedReviveRunning = false; return
+        end
+
+        -- Step 3: Fire HealEvent sekali untuk mulai proses
+        pcall(function() rh:FireServer(hrp, false) end)
+        task.wait(0.2)
+
+        -- Step 4: Continuous heal loop selama ~10 detik
+        -- Setiap tick: HealEvent + SkillCheckResult + HealAnimRec
+        -- Ini simulasi "orang lain heal kita terus-menerus"
+        for i = 1, 40 do
+            if not speedReviveRunning then break end
+            if not isKnocked() then
+                print("[REVIVE] Sudah tidak knocked! Berhenti.")
+                break
+            end
+
+            -- Fire HealEvent (self-heal tick)
+            pcall(function() rh:FireServer(hrp, false) end)
+
+            -- Juga coba fire dengan TRUE (seolah orang lain heal kita)
+            pcall(function() rh:FireServer(hrp, true) end)
+
+            -- Auto-pass skill check
+            if sk then
+                pcall(function() sk:FireServer("neutral", 0, char) end)
+            end
+
+            -- Trigger skill check event
+            if skEvt then
+                pcall(function() skEvt:FireServer() end)
+            end
+
+            -- Advance heal animation
+            if animRec then
+                pcall(function() animRec:FireServer() end)
+            end
+
+            -- Setiap 5 tick, juga kirim auxiliary remotes
+            if i % 5 == 0 then
+                pcall(function()
+                    ReplicatedStorage:FindFirstChild("Remotes")
+                        :FindFirstChild("Mechanics")
+                        :FindFirstChild("ChangeAttribute")
+                        :FireServer("Crouchingserver", false)
+                end)
+                pcall(function()
+                    ReplicatedStorage:FindFirstChild("Remotes")
+                        :FindFirstChild("EmoteHandler")
+                        :FireServer("StopEmote")
+                end)
+                pcall(function()
+                    ReplicatedStorage:FindFirstChild("Remotes")
+                        :FindFirstChild("Collision")
+                        :FindFirstChild("EnableCollision")
+                        :FireServer()
+                end)
+            end
+
+            task.wait(0.25)
+        end
+
+        -- Step 5: Fix client state
+        if hum then
+            pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+            pcall(function() hum.Health = hum.MaxHealth end)
+        end
+
+        -- Step 6: Destroy Status object kalau masih ada
+        if hum then
+            pcall(function()
+                local st = hum:FindFirstChild("Status")
+                if st then st:Destroy(); print("[REVIVE] Status destroyed") end
+            end)
+        end
+
+        -- Step 7: Destroy Hurtbox kalau masih ada
+        if hrp then
+            pcall(function()
+                local clone = hrp:FindFirstChild("HRP_Clone")
+                if clone then
+                    local hb = clone:FindFirstChild("Hurtbox")
+                    if hb then hb:Destroy(); print("[REVIVE] Hurtbox destroyed") end
+                end
+            end)
+        end
+
+        print("[REVIVE] Speed Self Revive selesai!")
+        WindUI:Notify({Title="Revive", Content="Proses heal selesai! Cek apakah sudah bangun.", Duration=3, Icon="heart"})
+        speedReviveRunning = false
+    end)
+end
+
+SurTab:Button({
+    Title       = "Speed Self Revive (10 detik)",
+    Description        = "Continuous heal process selama 10 detik. Gunakan saat KNOCKED! Bar PEMULIHAN harus penuh.",
+    Callback    = function() doSpeedSelfRevive() end
+})
+
+-- ══ 2. INSTAN REVIVE — Burst approach ════════════════════════
+-- HealEvent(hrp, false) 20x + SkillCheck(neutral,0) 20x
+SurTab:Button({
+    Title       = "Instant Revive (Burst)",
+    Description        = "HealEvent 20x + SkillCheck 20x burst. Cepat tapi mungkin ga lengkap.",
+    Callback    = function()
+        local ok, err = pcall(function()
+            local char = LocalPlayer.Character
+            if not char then error("Karakter tidak ada") end
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if not hrp then error("HRP tidak ada") end
+
+            local rh = getHealEvent()
+            if not rh then error("HealEvent tidak ditemukan") end
+
+            for i = 1, 20 do
+                pcall(function() rh:FireServer(hrp, false) end)
+                pcall(function() rh:FireServer(hrp, true) end)
+            end
+
+            task.delay(0.1, function()
+                local sk = getSkillCheck()
+                if sk then
+                    for i = 1, 20 do
+                        pcall(function() sk:FireServer("neutral", 0, char) end)
+                    end
+                end
+            end)
+
+            -- Also try SkillCheckEvent
+            task.delay(0.15, function()
+                local skEvt = getSkillCheckEvent()
+                if skEvt then
+                    for i = 1, 10 do
+                        pcall(function() skEvt:FireServer() end)
+                    end
+                end
+            end)
+
+            -- Fix client state
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
+                pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+                pcall(function() hum.Health = hum.MaxHealth end)
+            end
+        end)
+        WindUI:Notify({
+            Title   = "Revive",
+            Content = ok and "Burst Revive dikirim!" or "Gagal: "..tostring(err),
+            Duration = 2, Icon = ok and "heart" or "alert-circle"
+        })
+    end
+})
+
+-- ══ 3. AUTO SPEED REVIVE — Otomatis saat knock ══════════════
+local autoSpeedReviveEnabled = false
+SurTab:Toggle({
+    Title    = "Auto Speed Revive (saat knock)",
+    Description     = "Otomatis jalankan Speed Revive saat terdeteksi knocked",
+    Value    = false,
+    Callback = function(v)
+        autoSpeedReviveEnabled = v
+        if v then
+            task.spawn(function()
+                while autoSpeedReviveEnabled do
+                    if isKnocked() and not speedReviveRunning then
+                        doSpeedSelfRevive()
+                    end
+                    task.wait(2)
+                end
+            end)
+        end
+    end
+})
+
+-- ══ 4. INSTANT SELF HEAL (Fake Bandage bypass) ═══════════════
+-- Buat Part palsu bernama "Bandage" di Right Arm → fire ke Items/Bandage/Fire
+-- false = Heal (bukan revive), server cek "ada part?" → bypass tanpa item asli
+local function instantHealNoItem()
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    local rightArm = char:FindFirstChild("Right Arm") or char:FindFirstChild("RightHand")
+    if not rightArm then return end
+
+    local fakeBandage = rightArm:FindFirstChild("Bandage")
+    if not fakeBandage then
+        fakeBandage          = Instance.new("Part")
+        fakeBandage.Name        = "Bandage"
+        fakeBandage.Anchored    = true
+        fakeBandage.CanCollide  = false
+        fakeBandage.Transparency = 1
+        fakeBandage.Size        = Vector3.new(0.1, 0.1, 0.1)
+        fakeBandage.Parent      = rightArm
+    end
+
+    local ok, err = pcall(function()
+        local remote = ReplicatedStorage
+            :WaitForChild("Remotes", 5)
+            :WaitForChild("Items", 5)
+            :WaitForChild("Bandage", 5)
+            :WaitForChild("Fire", 5)
+
+        for i = 1, 5 do
+            remote:FireServer(false, fakeBandage)  -- false = Heal
+            task.wait(0.05)
+        end
+
+        pcall(function()
+            ReplicatedStorage:WaitForChild("Remotes",3)
+                :FindFirstChild("EmoteHandler"):FireServer("StopEmote")
+        end)
+    end)
+
+    WindUI:Notify({
+        Title   = "Self Heal",
+        Content = ok and "Instant Self Heal dikirim!" or "Gagal: "..tostring(err),
+        Duration = 2, Icon = ok and "heart" or "alert-circle"
+    })
+end
+
+SurTab:Button({
+    Title       = "Instant Self Heal (Fake Bandage)",
+    Description        = "Buat Bandage palsu di Right Arm. Untuk HEAL (bukan revive).",
+    Callback    = function() instantHealNoItem() end
+})
+
+-- ══ 5. FORCE REVIVE — Destroy Status + Hurtbox + All remotes ══
+-- Ini approach paling agresif: destroy object yang track knock state
+-- + fire semua remote yang bisa reset state
+SurTab:Button({
+    Title       = "Force Revive (Agresif)",
+    Description        = "Destroy Status + Hurtbox + Fix state + Remote burst. PAKSA bangun!",
+    Callback    = function()
+        local char = LocalPlayer.Character
+        if not char then
+            WindUI:Notify({Title="Error", Content="Karakter tidak ditemukan!", Duration=2, Icon="alert-circle"})
+            return
+        end
+
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+
+        -- Destroy Status object
+        if hum then
+            pcall(function()
+                local st = hum:FindFirstChild("Status")
+                if st then
+                    print("[FORCE] Destroying Humanoid.Status: " .. st.Name .. " (" .. st.ClassName .. ")")
+                    st:Destroy()
+                end
+            end)
+        end
+
+        -- Destroy Hurtbox
+        if hrp then
+            pcall(function()
+                local clone = hrp:FindFirstChild("HRP_Clone")
+                if clone then
+                    local hb = clone:FindFirstChild("Hurtbox")
+                    if hb then
+                        print("[FORCE] Destroying Hurtbox")
+                        hb:Destroy()
+                    end
+                end
+            end)
+        end
+
+        -- Fix humanoid state
+        if hum then
+            pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
+            pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, false) end)
+            pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false) end)
+            pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+            pcall(function() hum.Health = hum.MaxHealth end)
+        end
+
+        -- Remove attributes
+        if hrp then
+            pcall(function() hrp:SetAttribute("Crouchingserver", false) end)
+        end
+
+        -- Fire all relevant remotes
+        pcall(function() ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer() end)
+        pcall(function() ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false) end)
+        pcall(function() ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote") end)
+        pcall(function() ReplicatedStorage.Remotes.Mechanics.cancelaction:FireServer() end)
+
+        -- Also fire heal remotes
+        pcall(function()
+            local rh = getHealEvent()
+            if rh and hrp then
+                for i = 1, 10 do
+                    rh:FireServer(hrp, false)
+                    rh:FireServer(hrp, true)
+                end
+            end
+        end)
+        pcall(function()
+            local sk = getSkillCheck()
+            if sk then
+                for i = 1, 10 do
+                    sk:FireServer("neutral", 0, char)
+                end
+            end
+        end)
+
+        -- Burst lagi setelah 0.5s
+        task.delay(0.5, function()
+            pcall(function() ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer() end)
+            pcall(function() ReplicatedStorage.Remotes.Mechanics.ChangeAttribute:FireServer("Crouchingserver", false) end)
+            pcall(function() ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote") end)
+            pcall(function() ReplicatedStorage.Remotes.Mechanics.cancelaction:FireServer() end)
+        end)
+
+        WindUI:Notify({Title="Force Revive", Content="Status destroyed + Hurtbox destroyed + Remote burst!", Duration=3, Icon="heart"})
+    end
+})
+
+-- ══ 6. REVIVE / HEAL PLAYER LAIN ═════════════════════════════
+do
+    local reviveTargetName = ""
+
+    local function buildPlayerList()
+        local list = {}
+        for _, pl in ipairs(Players:GetPlayers()) do
+            if pl ~= LocalPlayer then table.insert(list, pl.Name) end
+        end
+        return #list > 0 and list or {"(Tidak ada player lain)"}
+    end
+
+    local reviveDrop = SurTab:Dropdown({
+        Title    = "Pilih Target Heal/Revive",
+        Values   = buildPlayerList(),
+        Value    = "",
+        Callback = function(v) reviveTargetName = v end
+    })
+
+    SurTab:Button({
+        Title    = "Refresh List Player",
+        Callback = function()
+            pcall(function() reviveDrop:Refresh(buildPlayerList(), false) end)
+            reviveTargetName = ""
+        end
+    })
+
+    SurTab:Button({
+        Title       = "Revive Player yang Dipilih (Instant)",
+        Description        = "HealEvent 20x + SkillCheck 20x ke target",
+        Callback    = function()
+            if reviveTargetName == "" or reviveTargetName:find("Tidak ada") then
+                WindUI:Notify({ Title="Revive", Content="Pilih target dulu!", Duration=2, Icon="alert-circle" })
+                return
+            end
+            local ok, err = pcall(function()
+                local target = nil
+                for _, pl in ipairs(Players:GetPlayers()) do
+                    if pl.Name == reviveTargetName then target = pl; break end
+                end
+                if not target or not target.Character then error("Target tidak valid") end
+                local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
+                if not tHRP then error("HRP target tidak ada") end
+
+                local rh = getHealEvent()
+                if not rh then error("HealEvent tidak ditemukan") end
+
+                for i = 1, 20 do
+                    pcall(function() rh:FireServer(tHRP, true) end)
+                    pcall(function() rh:FireServer(tHRP, false) end)
+                end
+
+                task.delay(0.1, function()
+                    local sk = getSkillCheck()
+                    if sk and target.Character then
+                        for i = 1, 20 do
+                            pcall(function() sk:FireServer("neutral", 0, target.Character) end)
+                        end
+                    end
+                end)
+            end)
+            WindUI:Notify({
+                Title   = "Revive",
+                Content = ok and "Revive dikirim ke "..reviveTargetName or "Gagal: "..tostring(err),
+                Duration = 2, Icon = ok and "heart" or "alert-circle"
+            })
+        end
+    })
+end
+
+-- ══ 7. DEBUG DUMP — Print knock state info ════════════════════
+SurTab:Button({
+    Title = "Debug: Dump Character State",
+    Description  = "Print semua attribute, value, dan child di karakter. PAKE SAAT KNOCK!",
+    Callback = function()
+        local char = LocalPlayer.Character
+        if not char then
+            WindUI:Notify({Title="Error", Content="Karakter tidak ditemukan!", Duration=2, Icon="alert-circle"})
+            return
+        end
+
+        WindUI:Notify({Title="Debug", Content="Dumping character state... Cek console!", Duration=3, Icon="search"})
+
+        task.spawn(function()
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            local root = char:FindFirstChild("HumanoidRootPart")
+
+            print("===== CHARACTER STATE DUMP =====")
+            print("HP: " .. (hum and tostring(hum.Health) or "nil"))
+            print("MaxHP: " .. (hum and tostring(hum.MaxHealth) or "nil"))
+            print("State: " .. (hum and tostring(hum:GetState()) or "nil"))
+
+            -- Dump Status object details
+            print("\n--- Humanoid.Status Object ---")
+            if hum then
+                local st = hum:FindFirstChild("Status")
+                if st then
+                    print("  Status found: " .. st.Name .. " (" .. st.ClassName .. ")")
+                    for _, child in ipairs(st:GetChildren()) do
+                        local val = ""
+                        pcall(function() val = tostring(child.Value) end)
+                        print("    " .. child.Name .. " = " .. val .. " (" .. child.ClassName .. ")")
+                    end
+                    for _, attr in ipairs(st:GetAttributes()) do
+                        print("    Attr: " .. attr .. " = " .. tostring(st:GetAttribute(attr)))
+                    end
+                else
+                    print("  Status: NOT FOUND")
+                end
+            end
+
+            -- Dump HRP_Clone/Hurtbox
+            print("\n--- HRP_Clone / Hurtbox ---")
+            if root then
+                local clone = root:FindFirstChild("HRP_Clone")
+                if clone then
+                    print("  HRP_Clone found: " .. clone.ClassName)
+                    for _, child in ipairs(clone:GetChildren()) do
+                        print("    " .. child.Name .. " (" .. child.ClassName .. ")")
+                    end
+                else
+                    print("  HRP_Clone: NOT FOUND")
+                end
+            end
+
+            -- Dump attributes
+            print("\n--- HumanoidRootPart Attributes ---")
+            if root then
+                for _, attr in ipairs(root:GetAttributes()) do
+                    print("  HRP Attr: " .. attr .. " = " .. tostring(root:GetAttribute(attr)))
+                end
+            end
+
+            print("\n--- Humanoid Attributes ---")
+            if hum then
+                for _, attr in ipairs(hum:GetAttributes()) do
+                    print("  Hum Attr: " .. attr .. " = " .. tostring(hum:GetAttribute(attr)))
+                end
+            end
+
+            -- Search knock-related objects
+            print("\n--- KNOCK-RELATED SEARCH ---")
+            for _, child in ipairs(char:GetDescendants()) do
+                local name = child.Name:lower()
+                if name:find("knock") or name:find("down") or name:find("injur") or name:find("hurt")
+                or name:find("crawl") or name:find("bleed") or name:find("status") or name:find("state")
+                or name:find("carry") or name:find("hook") or name:find("dead") or name:find("revive")
+                or name:find("crouch") or name:find("recover") or name:find("heal") then
+                    local val = ""
+                    pcall(function() val = tostring(child.Value) end)
+                    print("  >> " .. child:GetFullName() .. " = " .. val .. " (" .. child.ClassName .. ")")
+                end
+            end
+
+            -- Search knock-related attributes
+            for _, child in ipairs({char, hum, root}) do
+                if child then
+                    for _, attr in ipairs(child:GetAttributes()) do
+                        local name = attr:lower()
+                        if name:find("knock") or name:find("down") or name:find("injur") or name:find("hurt")
+                        or name:find("crawl") or name:find("bleed") or name:find("status") or name:find("state")
+                        or name:find("carry") or name:find("hook") or name:find("dead") or name:find("revive")
+                        or name:find("crouch") or name:find("recover") then
+                            local val = child:GetAttribute(attr)
+                            print("  >> ATTR " .. child.Name .. "." .. attr .. " = " .. tostring(val))
+                        end
+                    end
+                end
+            end
+
+            print("===== END DUMP =====")
+        end)
     end
 })
 
@@ -2190,8 +3923,8 @@ end)
 local camera = workspace.CurrentCamera
 
 -- ปุ่มใน Killer Tab สำหรับ Reset กล้อง
-killerTab:Button({ 
-    Title = "Fix Cam (3rd Person Camera)", 
+killerTab:Button({
+    Title = "Fix Cam (3rd Person Camera)",
     Callback = function()
         -- รีเซ็ตกล้อง
         local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
@@ -2214,12 +3947,55 @@ killerTab:Button({
     end
 })
 
--- ====================== VISUAL ======================
-
-local fullBrightEnabled = false
-local noFogEnabled = false
-
 MainTab:Section({ Title = "Feature Visual", Icon = "lightbulb" })
+MainTab:Button({
+    Title = "Ultra Fast Vault (Instant TP)",
+    Description = "Lompat jendela instan tanpa animasi",
+    Callback = function()
+        local player = game.Players.LocalPlayer
+        local character = player.Character
+        local hrp = character and character:FindFirstChild("HumanoidRootPart")
+        
+        if hrp then
+            -- Cari VaultTrigger terdekat (maksimal jarak 15 studs)
+            local targetTrigger = nil
+            local maxDist = 15
+            
+            for _, v in pairs(workspace:GetDescendants()) do
+                if v.Name == "VaultTrigger" and v:IsA("BasePart") then
+                    local dist = (hrp.Position - v.Position).Magnitude
+                    if dist < maxDist then
+                        targetTrigger = v
+                        maxDist = dist
+                    end
+                end
+            end
+
+            if targetTrigger then
+                local remotes = game:GetService("ReplicatedStorage").Remotes.Window
+                
+                -- 1. Kirim sinyal mulai lompat
+                remotes.VaultEvent:FireServer(targetTrigger, true)
+                
+                -- 2. Kirim sinyal Fast Vault
+                remotes.fastvault:FireServer(player)
+                
+                -- 3. BYPASS ANIMASI (Ini kunci biar instan)
+                -- Karakter dipaksa maju 8 studs menembus jendela
+                hrp.CFrame = hrp.CFrame * CFrame.new(0, 0, -8) 
+                
+                -- 4. Kirim sinyal selesai lompat
+                remotes.VaultCompleteEvent:FireServer(targetTrigger, false)
+            else
+                WindUI:Notify({
+                    Title = "Vault Error",
+                    Description = "Tidak ada jendela di dekatmu!",
+                    Duration = 3
+                })
+            end
+        end
+    end
+})
 
 -- ── PERFORMANCE SETTINGS ────────────────────────────────────────
 MainTab:Section({ Title = "Performance Settings", Icon = "gauge" })
@@ -2364,25 +4140,63 @@ do
         return #options > 0 and options or {"(Tidak ada player lain)"}
     end
 
+    -- Dropdown TIDAK langsung teleport — hanya simpan pilihan.
+    -- Teleport hanya terjadi kalau user tekan tombol "Teleport" secara eksplisit.
+    -- Ini juga mencegah auto-teleport saat script pertama kali jalan
+    -- atau saat Refresh dipanggil (Refresh tidak boleh trigger Callback).
+    local selectedPlayerName = ""   -- simpan nama tanpa langsung teleport
+
     local tpDropdown = PlayerTab:Dropdown({
         Title    = "Pilih Player",
         Values   = refreshPlayerDropdown(),
-        Value    = refreshPlayerDropdown()[1] or "",
+        Value    = "",   -- kosong = tidak ada pilihan awal → callback init tidak triggered
         Callback = function(selected)
+            -- Hanya simpan pilihan, JANGAN teleport di sini
+            selectedPlayerName = selected
+        end
+    })
+
+    PlayerTab:Button({
+        Title    = "🚀 Teleport ke Player yang Dipilih",
+        Callback = function()
+            if selectedPlayerName == "" or selectedPlayerName == "(Tidak ada player lain)" then
+                WindUI:Notify({
+                    Title    = "Teleport",
+                    Content  = "Pilih player dulu dari dropdown!",
+                    Duration = 2,
+                    Icon     = "alert-circle"
+                })
+                return
+            end
             for _, pl in ipairs(Players:GetPlayers()) do
-                if pl ~= LocalPlayer and selected:find(pl.Name, 1, true) then
+                if pl ~= LocalPlayer and selectedPlayerName:find(pl.Name, 1, true) then
                     safeTeleportToPlayer(pl)
-                    break
+                    WindUI:Notify({
+                        Title    = "Teleport",
+                        Content  = "Teleport ke " .. pl.Name,
+                        Duration = 2,
+                        Icon     = "map-pin"
+                    })
+                    return
                 end
             end
         end
     })
 
     PlayerTab:Button({
-        Title    = "Refresh Player List",
+        Title    = "🔄 Refresh Player List",
         Callback = function()
             pcall(function()
-                tpDropdown:Refresh(refreshPlayerDropdown(), true)
+                -- false = jangan reset value ke item pertama
+                -- → Callback dropdown TIDAK terpicu saat refresh
+                tpDropdown:Refresh(refreshPlayerDropdown(), false)
+                selectedPlayerName = ""  -- reset pilihan supaya user pilih ulang
+                WindUI:Notify({
+                    Title    = "Refresh",
+                    Content  = "Daftar player diperbarui.",
+                    Duration = 1.5,
+                    Icon     = "refresh-cw"
+                })
             end)
         end
     })
@@ -2431,191 +4245,558 @@ PlayerTab:Toggle({ Title = "No Clip", Value=false, Callback=function(state)
 end })
 
 -- ============================================================
--- AIMBOT TAB  (logika dari VD v17, UI disesuaikan WindUI)
+-- AIMBOT TAB (v2.0 — FOV screen-space, Lerp smooth, RMB, predict)
 -- ============================================================
-AimTab:Section({ Title = "Aimbot (v17)", Icon = "crosshair" })
+AimTab:Section({ Title = "Camera Aimbot", Icon = "crosshair" })
 
 AimTab:Toggle({
     Title       = "Enable Aimbot",
-    Description = "Kamera otomatis mengunci ke target terdekat dalam FOV",
+    Description = "Kamera Lerp ke target dalam FOV — target: Killer terdekat di layar",
     Value       = false,
     Callback    = function(v)
-        Config.Aimbot.Enabled = v
-        if v then startAimbot() else stopAimbot() end
+        VD.AIM_Enabled = v
+        if not v then drawFOVCircle(0) end
     end
 })
-
 AimTab:Toggle({
-    Title       = "Team Check  (skip sesama tim)",
-    Description = "Aimbot tidak akan kunci ke teammate sendiri",
-    Value       = true,
-    Callback    = function(v) Config.Aimbot.TeamCheck = v end
+    Title = "Hold RMB to Aim (tahan klik kanan)",
+    Value = true,
+    Callback = function(v) VD.AIM_UseRMB = v end
 })
-
-AimTab:Section({ Title = "Aim Target", Icon = "user" })
-
-AimTab:Dropdown({
-    Title    = "Target Bone",
-    Values   = {"Head", "Body"},
-    Value    = "Body",
+AimTab:Toggle({
+    Title = "Show FOV Circle",
+    Value = true,
     Callback = function(v)
-        Config.Aimbot.Bone = v:lower()
+        VD.AIM_ShowFOV = v
+        if v then drawFOVCircle(VD.AIM_FOV) else drawFOVCircle(0) end
     end
 })
-
-AimTab:Section({ Title = "Aim Range & FOV", Icon = "sliders-horizontal" })
-
+AimTab:Toggle({
+    Title = "Visibility Check (raycast)",
+    Value = true,
+    Callback = function(v) VD.AIM_VisCheck = v end
+})
+AimTab:Toggle({
+    Title = "Prediction (lead target)",
+    Value = true,
+    Callback = function(v) VD.AIM_Predict = v end
+})
 AimTab:Slider({
-    Title    = "FOV Radius  (pixel dari tengah layar)",
+    Title    = "FOV Radius (pixel dari tengah layar)",
     Value    = { Min = 30, Max = 500, Default = 120 },
     Step     = 10,
     Callback = function(v)
-        Config.Aimbot.FOV = v
-        if Config.Aimbot.Enabled then drawFOVCircle(v) end
+        VD.AIM_FOV = v
+        if VD.AIM_ShowFOV then drawFOVCircle(v) end
+    end
+})
+AimTab:Slider({
+    Title    = "Smoothness (0.05=snappy, 1=instant)",
+    Value    = { Min = 1, Max = 20, Default = 6 },
+    Step     = 1,
+    Callback = function(v) VD.AIM_Smooth = v / 20 end
+})
+
+AimTab:Section({ Title = "Spear Aimbot (Veil Killer)", Icon = "arrow-up-right" })
+AimTab:Toggle({
+    Title       = "Spear Aimbot",
+    Description = "Auto-aim kamera dengan kompensasi gravitasi untuk spear Veil",
+    Value       = false,
+    Callback    = function(v) VD.SPEAR_Aimbot = v end
+})
+AimTab:Slider({
+    Title    = "Spear Gravity",
+    Value    = { Min = 10, Max = 200, Default = 50 },
+    Step     = 5,
+    Callback = function(v) VD.SPEAR_Gravity = v end
+})
+AimTab:Slider({
+    Title    = "Spear Speed",
+    Value    = { Min = 50, Max = 300, Default = 100 },
+    Step     = 10,
+    Callback = function(v) VD.SPEAR_Speed = v end
+})
+
+AimTab:Section({ Title = "Radar", Icon = "radar" })
+AimTab:Toggle({ Title = "Enable Radar", Value = false, Callback = function(v) VD.RADAR_Enabled = v; if not v then Radar_hideAll() end end })
+AimTab:Toggle({ Title = "Circle Shape", Value = false, Callback = function(v) VD.RADAR_Circle = v end })
+AimTab:Slider({ Title = "Radar Size", Value = {Min=80,Max=250,Default=120}, Step=10, Callback = function(v) VD.RADAR_Size = v end })
+AimTab:Section({ Title = "Radar Filters", Icon = "filter" })
+AimTab:Toggle({ Title = "Show Killer",    Value = true,  Callback = function(v) VD.RADAR_Killer    = v end })
+AimTab:Toggle({ Title = "Show Survivor",  Value = true,  Callback = function(v) VD.RADAR_Survivor  = v end })
+AimTab:Toggle({ Title = "Show Generator", Value = true,  Callback = function(v) VD.RADAR_Generator = v end })
+AimTab:Toggle({ Title = "Show Pallet",    Value = true,  Callback = function(v) VD.RADAR_Pallet    = v end })
+
+-- ============================================================
+-- SILENT AIM TAB  (tab terpisah, bukan bagian dari Aimbot)
+-- ============================================================
+local silentFovCircle     = nil
+local silentFovUpdateConn = nil
+
+local function drawSilentFOVCircle(radius)
+    if silentFovUpdateConn then silentFovUpdateConn:Disconnect(); silentFovUpdateConn = nil end
+    pcall(function() if silentFovCircle then silentFovCircle:Remove(); silentFovCircle = nil end end)
+    if not radius or radius <= 0 then return end
+    local ok = pcall(function()
+        silentFovCircle           = Drawing.new("Circle")
+        silentFovCircle.Radius    = radius
+        silentFovCircle.Color     = Color3.fromRGB(255, 80, 80)  -- merah, beda dari aimbot
+        silentFovCircle.Thickness = 2
+        silentFovCircle.Filled    = false
+        silentFovCircle.NumSides  = 64
+        local vp = workspace.CurrentCamera.ViewportSize
+        silentFovCircle.Position = Vector2.new(vp.X / 2, vp.Y / 2)
+        silentFovCircle.Visible  = true
+    end)
+    if not ok then
+        warn("[VD] Drawing.new gagal — Silent Aim FOV circle tidak bisa ditampilkan")
+        silentFovCircle = nil; return
+    end
+    silentFovUpdateConn = game:GetService("RunService").RenderStepped:Connect(function()
+        if not silentFovCircle then return end
+        pcall(function()
+            local vp = workspace.CurrentCamera.ViewportSize
+            silentFovCircle.Position = Vector2.new(vp.X / 2, vp.Y / 2)
+        end)
+    end)
+end
+
+local function removeSilentFOVCircle()
+    if silentFovUpdateConn then silentFovUpdateConn:Disconnect(); silentFovUpdateConn = nil end
+    pcall(function() if silentFovCircle then silentFovCircle:Remove(); silentFovCircle = nil end end)
+end
+
+SilentTab:Section({ Title = "Silent Aim (v18)", Icon = "ghost" })
+
+SilentTab:Toggle({
+    Title       = "Enable Silent Aim",
+    Description = "Redirect tembakan ke target terdekat — kamera tidak bergerak",
+    Value       = false,
+    Callback    = function(v)
+        Config.SilentAim.Enabled = v
+        if v then
+            startSilentAim()
+            drawSilentFOVCircle(Config.SilentAim.FOV)
+            WindUI:Notify({ Title = "Silent Aim", Content = "Silent Aim aktif!", Duration = 2, Icon = "ghost" })
+        else
+            stopSilentAim()
+            removeSilentFOVCircle()
+            WindUI:Notify({ Title = "Silent Aim", Content = "Silent Aim dimatikan.", Duration = 2, Icon = "ghost" })
+        end
     end
 })
 
-AimTab:Slider({
-    Title    = "Max Range  (studs)",
-    Value    = { Min = 10, Max = 500, Default = 150 },
+SilentTab:Toggle({
+    Title       = "Team Check  (skip sesama tim)",
+    Description = "Silent Aim tidak redirect ke teammate",
+    Value       = true,
+    Callback    = function(v) Config.SilentAim.TeamCheck = v end
+})
+
+SilentTab:Section({ Title = "Target & Range", Icon = "user" })
+
+SilentTab:Dropdown({
+    Title    = "Target Bone",
+    Values   = {"Head", "Body"},
+    Value    = "Body",
+    Callback = function(v) Config.SilentAim.Bone = v:lower() end
+})
+
+SilentTab:Slider({
+    Title    = "FOV Radius  (pixel dari tengah layar)",
+    Value    = { Min = 30, Max = 600, Default = 200 },
     Step     = 10,
-    Callback = function(v) Config.Aimbot.Range = v end
+    Callback = function(v)
+        Config.SilentAim.FOV = v
+        if Config.SilentAim.Enabled then drawSilentFOVCircle(v) end
+    end
+})
+
+SilentTab:Slider({
+    Title    = "Max Range  (studs)",
+    Value    = { Min = 10, Max = 300, Default = 80 },
+    Step     = 5,
+    Callback = function(v) Config.SilentAim.Range = v end
 })
 
 Info = InfoTab
 
 -- ============================================================
--- QUICK PANEL  — 3 tombol lingkaran kecil (Moonwalk/Aimbot/GodMode)
+-- QUICK PANEL  — 3 tombol floating TERPISAH, masing-masing
+--   punya toggle sendiri di MainTab. Setiap tombol bisa di-drag.
 -- ============================================================
-local quickPanelGui = nil
-local quickPanelVisible = false
 
-local function buildQuickPanel()
-    if quickPanelGui then quickPanelGui:Destroy(); quickPanelGui = nil end
-
+-- Helper: buat 1 tombol floating mandiri (draggable, tap = toggle)
+local function makeFloatingBtn(name, icon, colOn, colStrokeOn, initPos, tapFn)
     local sg = Instance.new("ScreenGui")
-    sg.Name = "VD_QuickPanel"; sg.ResetOnSpawn = false; sg.DisplayOrder = 998
+    sg.Name = "VD_FB_" .. name
+    sg.ResetOnSpawn = false
+    sg.DisplayOrder = 998
     sg.Parent = LocalPlayer:FindFirstChild("PlayerGui") or game:GetService("CoreGui")
-    quickPanelGui = sg
 
-    -- Drag wrapper (semua tombol ada di dalamnya)
-    local panel = Instance.new("Frame", sg)
-    panel.Size = UDim2.new(0, 40, 0, 136)   -- 3 tombol 36px + gap
-    panel.Position = UDim2.new(0, 65, 0.5, -68)
-    panel.BackgroundTransparency = 1
-    panel.BorderSizePixel = 0
+    local COL_OFF        = Color3.fromRGB(20,20,20)
+    local COL_STROKE_OFF = Color3.fromRGB(80,80,80)
 
-    -- Drag logic untuk whole panel
-    local drag, ds, sp = false, nil, nil
-    panel.InputBegan:Connect(function(i)
+    local btn = Instance.new("TextButton", sg)
+    btn.Size             = UDim2.new(0,48,0,48)
+    btn.Position         = initPos
+    btn.BackgroundColor3 = COL_OFF
+    btn.Text             = icon
+    btn.TextSize         = 20
+    btn.Font             = Enum.Font.GothamBold
+    btn.TextColor3       = Color3.fromRGB(160,160,160)
+    btn.BorderSizePixel  = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(1,0)
+    local stk = Instance.new("UIStroke", btn)
+    stk.Color = COL_STROKE_OFF; stk.Thickness = 1.5
+
+    -- Label kecil di bawah tombol
+    local lbl = Instance.new("TextLabel", sg)
+    lbl.Size            = UDim2.new(0,80,0,16)
+    lbl.BackgroundTransparency = 1
+    lbl.Font            = Enum.Font.GothamBold
+    lbl.TextSize        = 10
+    lbl.TextColor3      = Color3.fromRGB(200,200,200)
+    lbl.TextStrokeColor3 = Color3.new(0,0,0)
+    lbl.TextStrokeTransparency = 0
+    lbl.Text            = name
+    lbl.TextXAlignment  = Enum.TextXAlignment.Center
+
+    local on    = false
+    local drag  = false
+    local ds, sp, moved = nil, nil, false
+
+    local function setState(v)
+        on = v
+        if on then
+            btn.BackgroundColor3 = colOn
+            stk.Color            = colStrokeOn
+            btn.TextColor3       = Color3.new(1,1,1)
+        else
+            btn.BackgroundColor3 = COL_OFF
+            stk.Color            = COL_STROKE_OFF
+            btn.TextColor3       = Color3.fromRGB(160,160,160)
+        end
+    end
+
+    local UIS = game:GetService("UserInputService")
+
+    btn.InputBegan:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1
             or i.UserInputType == Enum.UserInputType.Touch then
-            drag = true; ds = i.Position; sp = panel.Position
+            drag = true; moved = false
+            ds = i.Position; sp = btn.Position
         end
     end)
-    game:GetService("UserInputService").InputChanged:Connect(function(i)
+    UIS.InputChanged:Connect(function(i)
         if drag and (i.UserInputType == Enum.UserInputType.MouseMovement
             or i.UserInputType == Enum.UserInputType.Touch) then
             local d = i.Position - ds
-            panel.Position = UDim2.new(sp.X.Scale, sp.X.Offset+d.X, sp.Y.Scale, sp.Y.Offset+d.Y)
+            if math.abs(d.X)>4 or math.abs(d.Y)>4 then moved = true end
+            local nx = UDim2.new(sp.X.Scale, sp.X.Offset+d.X, sp.Y.Scale, sp.Y.Offset+d.Y)
+            btn.Position = nx
+            -- Label ngikut
+            lbl.Position = UDim2.new(nx.X.Scale, nx.X.Offset-16, nx.Y.Scale, nx.Y.Offset+50)
         end
     end)
-    game:GetService("UserInputService").InputEnded:Connect(function(i)
+    btn.InputEnded:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1
-            or i.UserInputType == Enum.UserInputType.Touch then drag = false end
-    end)
-
-    -- Helper buat 1 tombol lingkaran
-    local COL_OFF = Color3.fromRGB(20, 20, 20)
-    local COL_STROKE_OFF = Color3.fromRGB(80, 80, 80)
-
-    local function makeQBtn(yOffset, icon, colOn, colStrokeOn, tapFn)
-        local btn = Instance.new("TextButton", panel)
-        btn.Size = UDim2.new(0, 40, 0, 40)
-        btn.Position = UDim2.new(0, 0, 0, yOffset)
-        btn.BackgroundColor3 = COL_OFF
-        btn.Text = icon; btn.TextSize = 16
-        btn.Font = Enum.Font.GothamBold
-        btn.TextColor3 = Color3.fromRGB(160, 160, 160)
-        btn.BorderSizePixel = 0
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(1, 0)
-        local stk = Instance.new("UIStroke", btn)
-        stk.Color = COL_STROKE_OFF; stk.Thickness = 1.5
-
-        local on = false
-        local function setState(v)
-            on = v
-            if on then
-                btn.BackgroundColor3 = colOn
-                stk.Color = colStrokeOn
-                btn.TextColor3 = Color3.new(1,1,1)
-            else
-                btn.BackgroundColor3 = COL_OFF
-                stk.Color = COL_STROKE_OFF
-                btn.TextColor3 = Color3.fromRGB(160,160,160)
-            end
-        end
-
-        -- tap detection (aman dari drag)
-        local moved = false
-        btn.InputBegan:Connect(function(i)
-            if i.UserInputType == Enum.UserInputType.MouseButton1
-                or i.UserInputType == Enum.UserInputType.Touch then moved = false end
-        end)
-        btn.InputChanged:Connect(function(i)
-            if i.UserInputType == Enum.UserInputType.MouseMovement
-                or i.UserInputType == Enum.UserInputType.Touch then moved = true end
-        end)
-        btn.InputEnded:Connect(function(i)
-            if (i.UserInputType == Enum.UserInputType.MouseButton1
-                or i.UserInputType == Enum.UserInputType.Touch) and not moved then
+            or i.UserInputType == Enum.UserInputType.Touch then
+            drag = false
+            if not moved then
                 on = not on
                 setState(on)
                 tapFn(on)
             end
-        end)
+        end
+    end)
 
-        return setState   -- kembalikan setState agar GUI toggle bisa sync
+    -- posisi awal label
+    lbl.Position = UDim2.new(initPos.X.Scale, initPos.X.Offset-16, initPos.Y.Scale, initPos.Y.Offset+50)
+
+    return sg, setState
+end
+
+-- State & refs untuk masing-masing tombol floating
+local fbMoonGui, fbMoonSet = nil, nil
+local fbAimGui,  fbAimSet  = nil, nil
+local fbGodGui,  fbGodSet  = nil, nil
+
+-- Toggle di Main tab — masing-masing tombol floating punya toggle sendiri
+MainTab:Section({ Title = "Quick Panel", Icon = "zap" })
+
+MainTab:Toggle({
+    Title       = "🌙  Tombol Moonwalk",
+    Description = "Tampilkan tombol floating Moonwalk di layar (bisa di-drag)",
+    Value       = false,
+    Callback    = function(v)
+        if v then
+            fbMoonGui, fbMoonSet = makeFloatingBtn(
+                "Moonwalk", "🌙",
+                Color3.fromRGB(40,20,80), Color3.fromRGB(168,85,247),
+                UDim2.new(0, 12, 0.38, 0),
+                function(on) if on then startMoonwalk() else stopMoonwalk() end end
+            )
+        else
+            if fbMoonGui then fbMoonGui:Destroy(); fbMoonGui = nil end
+        end
+    end
+})
+
+MainTab:Toggle({
+    Title       = "🎯  Tombol Aimbot",
+    Description = "Tampilkan tombol floating Aimbot di layar (bisa di-drag)",
+    Value       = false,
+    Callback    = function(v)
+        if v then
+            fbAimGui, fbAimSet = makeFloatingBtn(
+                "Aimbot", "🎯",
+                Color3.fromRGB(20,50,20), Color3.fromRGB(80,200,80),
+                UDim2.new(0, 12, 0.50, 0),
+                function(on)
+                    Config.Aimbot.Enabled = on
+                    if on then startAimbot() else stopAimbot() end
+                end
+            )
+        else
+            if fbAimGui then fbAimGui:Destroy(); fbAimGui = nil end
+        end
+    end
+})
+
+MainTab:Toggle({
+    Title       = "🛡  Tombol GodMode",
+    Description = "Tampilkan tombol floating GodMode di layar (bisa di-drag)",
+    Value       = false,
+    Callback    = function(v)
+        if v then
+            fbGodGui, fbGodSet = makeFloatingBtn(
+                "GodMode", "🛡",
+                Color3.fromRGB(50,30,10), Color3.fromRGB(232,137,12),
+                UDim2.new(0, 12, 0.62, 0),
+                function(on) if on then startGodMode() else stopGodMode() end end
+            )
+        else
+            if fbGodGui then fbGodGui:Destroy(); fbGodGui = nil end
+        end
+    end
+})
+
+-- ============================================================
+-- CROSSHAIR SYSTEM  — berbagai style, warna & ukuran custom
+-- ============================================================
+local crosshairDrawings = {}
+local crosshairUpdateConn = nil
+local crosshairEnabled = false
+local crosshairStyle  = "Cross"
+local crosshairColor  = Color3.fromRGB(255, 255, 255)
+local crosshairSize   = 12
+local crosshairThick  = 1.5
+local crosshairGap    = 4
+local crosshairDot    = false
+
+local function removeCrosshair()
+    if crosshairUpdateConn then crosshairUpdateConn:Disconnect(); crosshairUpdateConn = nil end
+    for _, d in pairs(crosshairDrawings) do pcall(function() d:Remove() end) end
+    crosshairDrawings = {}
+end
+
+local function buildCrosshair()
+    removeCrosshair()
+    if not crosshairEnabled then return end
+
+    local ok = pcall(function() Drawing.new("Line"):Remove() end)
+    if not ok then warn("[VD] Drawing API tidak tersedia — crosshair tidak bisa ditampilkan"); return end
+
+    local function line(x1,y1,x2,y2)
+        local l = Drawing.new("Line")
+        l.Color = crosshairColor; l.Thickness = crosshairThick; l.Visible = true
+        l.From = Vector2.new(x1,y1); l.To = Vector2.new(x2,y2)
+        table.insert(crosshairDrawings, l); return l
+    end
+    local function circle(r, filled)
+        local c = Drawing.new("Circle")
+        c.Color = crosshairColor; c.Thickness = crosshairThick
+        c.Radius = r; c.Filled = filled or false
+        c.NumSides = 32; c.Visible = true
+        table.insert(crosshairDrawings, c); return c
+    end
+    local function dot()
+        local c = Drawing.new("Circle")
+        c.Color = crosshairColor; c.Filled = true
+        c.Radius = crosshairThick + 1; c.Thickness = 1
+        c.NumSides = 16; c.Visible = true
+        table.insert(crosshairDrawings, c); return c
+    end
+    local function square(hw)
+        local sq = Drawing.new("Square")
+        sq.Color = crosshairColor; sq.Thickness = crosshairThick
+        sq.Filled = false; sq.Visible = true
+        table.insert(crosshairDrawings, sq); return sq
     end
 
-    -- 🌙 Moonwalk
-    local setMoon = makeQBtn(0, "🌙",
-        Color3.fromRGB(40, 20, 80), Color3.fromRGB(168, 85, 247),
-        function(v)
-            if v then startMoonwalk() else stopMoonwalk() end
-        end)
+    -- Build shapes (posisi dummy dulu, update loop yang set posisi)
+    local s = crosshairStyle
+    if s == "Cross" then
+        line(0,0,0,0); line(0,0,0,0)   -- horizontal, vertical
+    elseif s == "Cross + Gap" then
+        line(0,0,0,0); line(0,0,0,0)   -- kiri, kanan
+        line(0,0,0,0); line(0,0,0,0)   -- atas, bawah
+    elseif s == "Dot" then
+        dot()
+    elseif s == "Circle" then
+        circle(crosshairSize, false)
+    elseif s == "Circle + Dot" then
+        circle(crosshairSize, false); dot()
+    elseif s == "Circle + Cross" then
+        circle(crosshairSize, false)
+        line(0,0,0,0); line(0,0,0,0)
+    elseif s == "T-Shape" then
+        line(0,0,0,0)   -- horizontal
+        line(0,0,0,0)   -- bawah saja (T)
+    elseif s == "X-Shape" then
+        line(0,0,0,0); line(0,0,0,0)  -- diagonal \/
+    elseif s == "Square" then
+        square(crosshairSize)
+    elseif s == "Square + Dot" then
+        square(crosshairSize); dot()
+    elseif s == "Sniper" then
+        -- 4 garis panjang dari pinggir layar ke tengah dengan gap besar
+        line(0,0,0,0); line(0,0,0,0); line(0,0,0,0); line(0,0,0,0)
+    end
 
-    -- 🎯 Aimbot
-    local setAim = makeQBtn(48, "🎯",
-        Color3.fromRGB(20, 50, 20), Color3.fromRGB(80, 200, 80),
-        function(v)
-            Config.Aimbot.Enabled = v
-            if v then startAimbot() else stopAimbot() end
-        end)
+    -- Update posisi tiap frame
+    crosshairUpdateConn = game:GetService("RunService").RenderStepped:Connect(function()
+        if #crosshairDrawings == 0 then return end
+        local vp = workspace.CurrentCamera.ViewportSize
+        local cx, cy = vp.X/2, vp.Y/2
+        local sz  = crosshairSize
+        local gap = crosshairGap
 
-    -- 🛡 GodMode
-    local setGod = makeQBtn(96, "🛡",
-        Color3.fromRGB(50, 30, 10), Color3.fromRGB(232, 137, 12),
-        function(v)
-            if v then startGodMode() else stopGodMode() end
+        pcall(function()
+            if s == "Cross" then
+                crosshairDrawings[1].From = Vector2.new(cx-sz, cy)
+                crosshairDrawings[1].To   = Vector2.new(cx+sz, cy)
+                crosshairDrawings[2].From = Vector2.new(cx, cy-sz)
+                crosshairDrawings[2].To   = Vector2.new(cx, cy+sz)
+            elseif s == "Cross + Gap" then
+                -- horizontal kiri
+                crosshairDrawings[1].From = Vector2.new(cx-sz, cy)
+                crosshairDrawings[1].To   = Vector2.new(cx-gap, cy)
+                -- horizontal kanan
+                crosshairDrawings[2].From = Vector2.new(cx+gap, cy)
+                crosshairDrawings[2].To   = Vector2.new(cx+sz, cy)
+                -- vertical atas
+                crosshairDrawings[3].From = Vector2.new(cx, cy-sz)
+                crosshairDrawings[3].To   = Vector2.new(cx, cy-gap)
+                -- vertical bawah
+                crosshairDrawings[4].From = Vector2.new(cx, cy+gap)
+                crosshairDrawings[4].To   = Vector2.new(cx, cy+sz)
+            elseif s == "Dot" then
+                crosshairDrawings[1].Position = Vector2.new(cx, cy)
+            elseif s == "Circle" then
+                crosshairDrawings[1].Position = Vector2.new(cx, cy)
+                crosshairDrawings[1].Radius   = sz
+            elseif s == "Circle + Dot" then
+                crosshairDrawings[1].Position = Vector2.new(cx, cy)
+                crosshairDrawings[1].Radius   = sz
+                crosshairDrawings[2].Position = Vector2.new(cx, cy)
+            elseif s == "Circle + Cross" then
+                crosshairDrawings[1].Position = Vector2.new(cx, cy)
+                crosshairDrawings[1].Radius   = sz
+                crosshairDrawings[2].From = Vector2.new(cx-sz, cy)
+                crosshairDrawings[2].To   = Vector2.new(cx+sz, cy)
+                crosshairDrawings[3].From = Vector2.new(cx, cy-sz)
+                crosshairDrawings[3].To   = Vector2.new(cx, cy+sz)
+            elseif s == "T-Shape" then
+                crosshairDrawings[1].From = Vector2.new(cx-sz, cy)
+                crosshairDrawings[1].To   = Vector2.new(cx+sz, cy)
+                crosshairDrawings[2].From = Vector2.new(cx, cy)
+                crosshairDrawings[2].To   = Vector2.new(cx, cy+sz)
+            elseif s == "X-Shape" then
+                crosshairDrawings[1].From = Vector2.new(cx-sz, cy-sz)
+                crosshairDrawings[1].To   = Vector2.new(cx+sz, cy+sz)
+                crosshairDrawings[2].From = Vector2.new(cx+sz, cy-sz)
+                crosshairDrawings[2].To   = Vector2.new(cx-sz, cy+sz)
+            elseif s == "Square" then
+                crosshairDrawings[1].Size     = Vector2.new(sz*2, sz*2)
+                crosshairDrawings[1].Position = Vector2.new(cx-sz, cy-sz)
+            elseif s == "Square + Dot" then
+                crosshairDrawings[1].Size     = Vector2.new(sz*2, sz*2)
+                crosshairDrawings[1].Position = Vector2.new(cx-sz, cy-sz)
+                crosshairDrawings[2].Position = Vector2.new(cx, cy)
+            elseif s == "Sniper" then
+                -- atas
+                crosshairDrawings[1].From = Vector2.new(cx, 0)
+                crosshairDrawings[1].To   = Vector2.new(cx, cy - gap*3)
+                -- bawah
+                crosshairDrawings[2].From = Vector2.new(cx, cy + gap*3)
+                crosshairDrawings[2].To   = Vector2.new(cx, vp.Y)
+                -- kiri
+                crosshairDrawings[3].From = Vector2.new(0, cy)
+                crosshairDrawings[3].To   = Vector2.new(cx - gap*3, cy)
+                -- kanan
+                crosshairDrawings[4].From = Vector2.new(cx + gap*3, cy)
+                crosshairDrawings[4].To   = Vector2.new(vp.X, cy)
+            end
         end)
-
-    quickPanelVisible = true
+    end)
 end
 
-local function destroyQuickPanel()
-    if quickPanelGui then quickPanelGui:Destroy(); quickPanelGui = nil end
-    quickPanelVisible = false
-end
+-- ─── UI Crosshair di MainTab ─────────────────────────────────
+MainTab:Section({ Title = "Crosshair", Icon = "crosshair" })
 
--- Toggle di Main tab
-MainTab:Section({ Title = "Quick Panel", Icon = "zap" })
 MainTab:Toggle({
-    Title = "Quick Panel  (Moonwalk · Aimbot · GodMode)",
-    Description = "Tampilkan 3 tombol lingkaran cepat di layar",
-    Value = false,
+    Title       = "Enable Crosshair",
+    Description = "Tampilkan crosshair kustom di tengah layar",
+    Value       = false,
+    Callback    = function(v)
+        crosshairEnabled = v
+        buildCrosshair()
+    end
+})
+
+MainTab:Dropdown({
+    Title    = "Style",
+    Values   = {"Cross", "Cross + Gap", "Dot", "Circle", "Circle + Dot", "Circle + Cross", "T-Shape", "X-Shape", "Square", "Square + Dot", "Sniper"},
+    Value    = "Cross",
     Callback = function(v)
-        if v then buildQuickPanel() else destroyQuickPanel() end
+        crosshairStyle = v
+        buildCrosshair()
+    end
+})
+
+MainTab:Slider({
+    Title    = "Ukuran",
+    Value    = { Min = 4, Max = 50, Default = 12 },
+    Step     = 1,
+    Callback = function(v) crosshairSize = v; buildCrosshair() end
+})
+
+MainTab:Slider({
+    Title    = "Ketebalan",
+    Value    = { Min = 1, Max = 6, Default = 2 },
+    Step     = 1,
+    Callback = function(v) crosshairThick = v; buildCrosshair() end
+})
+
+MainTab:Slider({
+    Title    = "Gap (jarak dari tengah)",
+    Value    = { Min = 0, Max = 20, Default = 4 },
+    Step     = 1,
+    Callback = function(v) crosshairGap = v; buildCrosshair() end
+})
+
+MainTab:Colorpicker({
+    Title    = "Warna Crosshair",
+    Description     = "Pilih warna untuk crosshair kustom",
+    Default  = Color3.fromRGB(255, 255, 255),
+    Transparency = 0,
+    Callback = function(v)
+        pcall(function()
+            crosshairColor = v
+            buildCrosshair()
+        end)
     end
 })
 
@@ -2623,7 +4804,7 @@ MainTab:Toggle({
 -- END OF SCRIPT
 -- ============================================================
 Info:Label({
-    Title = "Polleser Hub v2.4",
+    Title = "Polleser Hub v1.3",
     TextXAlignment = "Center",
     TextSize = 17,
 })
@@ -2631,7 +4812,7 @@ Info:Divider()
 
 local Discord = Info:Paragraph({
     Title = "Discord",
-    Desc = "Join our discord for more scripts!",
+    Description = "Join our discord for more scripts!",
     Image = "rbxassetid://99240933011775",
     ImageSize = 30,
     Thumbnail = "",
