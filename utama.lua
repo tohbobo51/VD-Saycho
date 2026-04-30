@@ -4109,44 +4109,40 @@ Info = InfoTab
 -- ============================================================
 -- INFORMATION TAB CONTENT
 -- ============================================================
-Info:Label({
-    Title = "Holic",
-    TextXAlignment = "Center",
-    TextSize = 22,
-})
+pcall(function()
+    Info:Paragraph({
+        Title = "Holic",
+        Desc = "Dibuat oleh Saycho\nPada tanggal 01 Mei 2026\n\nScript khusus untuk Violence District\nFast Vault, ESP, Aimbot, Heal, dan lainnya.",
+        Image = "rbxassetid://99240933011775",
+        ImageSize = 40,
+        Thumbnail = "",
+        ThumbnailSize = 0,
+        Locked = false,
+        Buttons = {}
+    })
 
-Info:Paragraph({
-    Title = "",
-    Desc = "Dibuat oleh Saycho\nPada tanggal 01 Mei 2026\n\nScript khusus untuk Violence District\nFast Vault, ESP, Aimbot, Heal, dan lainnya.",
-    Image = "rbxassetid://99240933011775",
-    ImageSize = 40,
-    Thumbnail = "",
-    ThumbnailSize = 0,
-    Locked = false,
-    Buttons = {}
-})
+    Info:Divider()
 
-Info:Divider()
-
-Info:Paragraph({
-    Title = "Discord",
-    Desc = "Join server Discord untuk update, info, dan chat!",
-    Image = "rbxassetid://99240933011775",
-    ImageSize = 30,
-    Thumbnail = "",
-    ThumbnailSize = 0,
-    Locked = false,
-    Buttons = {
-        {
-            Icon = "copy",
-            Title = "Copy Link",
-            Callback = function()
-                setclipboard("https://discord.gg/9yAtRgpsua")
-                print("Copied discord link to clipboard!")
-            end,
+    Info:Paragraph({
+        Title = "Discord",
+        Desc = "Join server Discord untuk update, info, dan chat!",
+        Image = "rbxassetid://99240933011775",
+        ImageSize = 30,
+        Thumbnail = "",
+        ThumbnailSize = 0,
+        Locked = false,
+        Buttons = {
+            {
+                Icon = "copy",
+                Title = "Copy Link",
+                Callback = function()
+                    setclipboard("https://discord.gg/9yAtRgpsua")
+                    print("Copied discord link to clipboard!")
+                end,
+            }
         }
-    }
-})
+    })
+end)
 
 -- ============================================================
 -- QUICK PANEL  — 3 tombol floating TERPISAH, masing-masing
