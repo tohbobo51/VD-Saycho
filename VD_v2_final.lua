@@ -4781,7 +4781,7 @@ local function makeFloatingBtn(name, icon, colOn, colStrokeOn, initPos, tapFn)
     btn.BackgroundColor3 = COL_OFF
     btn.Text             = icon
     btn.TextSize         = 20
-    btn.Font             = "GothamBold"
+    btn.Font             = Enum.Font.GothamBold
     btn.TextColor3       = Color3.fromRGB(160,160,160)
     btn.BorderSizePixel  = 0
     Instance.new("UICorner", btn).CornerRadius = UDim.new(1,0)
@@ -4792,7 +4792,7 @@ local function makeFloatingBtn(name, icon, colOn, colStrokeOn, initPos, tapFn)
     local lbl = Instance.new("TextLabel", sg)
     lbl.Size            = UDim2.new(0,80,0,16)
     lbl.BackgroundTransparency = 1
-    lbl.Font            = "GothamBold"
+    lbl.Font            = Enum.Font.GothamBold
     lbl.TextSize        = 10
     lbl.TextColor3      = Color3.fromRGB(200,200,200)
     lbl.TextStrokeColor3 = Color3.new(0,0,0)
