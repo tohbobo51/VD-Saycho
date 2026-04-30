@@ -2923,53 +2923,29 @@ SurTab:Toggle({
 
 SurTab:Section({ Title = "Feature Heal", Icon = "cross" })
 
--- ════ HEAL SYSTEM — CLIENT + SERVER COMBO ═══
--- Client-side: set HP, ChangeState, SetStateEnabled → karakter VISIBLE bangun
--- Server-side: kirim RemoteEvent → server reset knock state & restore HP
--- Keduanya DIPERLUKAN! Tanpa client = karakter tetap rebah. Tanpa server = desync.
+-- ════ AUTO SELF REVIVE (via Healing/Reset + EnableCollision + ChangeAttribute) ═══
+-- HANYA kirim remote ke server, TIDAK manipulasi client-side
+-- Client-side HP/State manipulation = bikin desync = JADI KEBAL
 --
 -- MEKANIK GAME VD:
 --   HP < 50  = KNOCKED (bisa di-carry, di-hook killer)
 --   HP 50-100 = ALIVE (normal, bisa jalan/tembak)
-
+--
+-- RemoteSpy SAAT REVIVE DARI KNOCK (orang lain revive kita):
+--   1. Collision.EnableCollision:FireServer() = ✅ RE-ENABLE COLLISION (saat knock collision disabled!)
+--   2. EmoteHandler("StopEmote") = stop animasi sekarat
+--   3. Healing.Reset(Player) = reset knock state + restore HP
+--
+-- RemoteSpy SAAT HEAL FULL HP (bukan dari knock, darah berkurang saja):
+--   1. ChangeAttribute("Crouchingserver", false) = hapus state injured/crouching
+--   2. EmoteHandler("StopEmote") = stop animasi sekarat
+--   3. Healing.Reset(Player) = reset state + restore HP
+--
+-- ⚠️ Jadi ada 2 skenario berbeda! Kita kirim SEMUA remote supaya cover kedua skenario
 local autoSelfReviveEnabled = false
 local autoSpeedReviveEnabled = false
 local lastHealDebug = {}
 
--- ═══ Helper: Cari remote aman (step-by-step FindFirstChild) ═══
-local function findRemote(...)
-    local names = {...}
-    local obj = ReplicatedStorage:FindFirstChild("Remotes")
-    if not obj then return nil end
-    for i = 1, #names do
-        obj = obj:FindFirstChild(names[i])
-        if not obj then return nil end
-    end
-    local isRE = false
-    pcall(function() isRE = obj:IsA("RemoteEvent") end)
-    if isRE then return obj end
-    return nil
-end
-
--- ═══ Helper: Fire remote aman ═══
-local function fireRemote(pathTable, arg1, arg2, arg3)
-    local remote = findRemote(unpack(pathTable))
-    if not remote then return false end
-    local ok = pcall(function()
-        if arg3 ~= nil then
-            remote:FireServer(arg1, arg2, arg3)
-        elseif arg2 ~= nil then
-            remote:FireServer(arg1, arg2)
-        elseif arg1 ~= nil then
-            remote:FireServer(arg1)
-        else
-            remote:FireServer()
-        end
-    end)
-    return ok
-end
-
--- ═══ MAIN: sendSelfHeal() — kirim semua heal remote ═══
 local function sendSelfHeal()
     local char = LocalPlayer.Character
     if not char then return end
@@ -2978,75 +2954,57 @@ local function sendSelfHeal()
 
     lastHealDebug = {}
 
-    -- ═══ CLIENT-SIDE: Bikin karakter langsung bangun di layar ═══
+    -- ═══ LANGSUNG SET HP (WORKS! terbukti dari Explorer) ═══
+    if hum then
+        pcall(function() hum.Health = hum.MaxHealth end)
+    end
+
+    -- ═══ Fix knock state ═══
     if hum then
         pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
         pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, false) end)
         pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false) end)
         pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-        pcall(function() hum.Health = hum.MaxHealth end)
-        local hpNow = 0
-        pcall(function() hpNow = math.floor(hum.Health) end)
-        lastHealDebug.clientState = "GettingUp HP=" .. tostring(hpNow)
+        lastHealDebug.client = "GettingUp + HP=MaxHealth"
     end
 
-    -- ═══ Hapus injured attribute di client ═══
+    -- ═══ Hapus injured attribute ═══
     if root then
         pcall(function() root:SetAttribute("Crouchingserver", false) end)
-        lastHealDebug.clientAttr = "Crouchingserver=false"
+        lastHealDebug.attr = "Crouchingserver=false"
     end
 
-    -- ═══ SERVER-SIDE: Kirim remote dalam urutan yang benar ═══
+    -- ═══ Remote calls ke server ═══
+    pcall(function() ReplicatedStorage.Remotes.Healing.Stophealing:FireServer() end)
+    lastHealDebug.stopHeal = "sent"
 
-    -- 1. Stop proses heal lama
-    lastHealDebug.stopHeal = fireRemote({"Healing", "Stophealing"}) and "OK" or "FAIL"
+    pcall(function() ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer() end)
+    lastHealDebug.collision = "sent"
 
-    -- 2. Re-enable collision (WAJIB saat revive dari knock!)
-    lastHealDebug.enableCollision = fireRemote({"Collision", "EnableCollision"}) and "OK" or "FAIL"
+    pcall(function() ReplicatedStorage.Remotes.Mechanics.Status.ChangeAttribute:FireServer("Crouchingserver", false) end)
+    lastHealDebug.changeAttr = "sent"
 
-    -- 3. Hapus state injured/crouching (ChangeAttribute)
-    local attrOk = false
-    local caRemote = findRemote("Mechanics", "Status", "ChangeAttribute")
-    if caRemote then
-        attrOk = pcall(function() caRemote:FireServer("Crouchingserver", false) end)
-    else
-        local caRemote2 = findRemote("Mechanics", "ChangeAttribute")
-        if caRemote2 then
-            attrOk = pcall(function() caRemote2:FireServer("Crouchingserver", false) end)
-        end
-    end
-    lastHealDebug.changeAttr = attrOk and "OK" or "FAIL"
+    pcall(function() ReplicatedStorage.Remotes.Healing.HealAnim:FireServer() end)
+    lastHealDebug.healAnim = "sent"
 
-    -- 4. Mainkan animasi heal (PROSES yang terlihat!)
-    local animOk = fireRemote({"Healing", "HealAnim"})
-    lastHealDebug.healAnim = animOk and "OK" or "NOT_FOUND"
+    pcall(function() ReplicatedStorage.Remotes.Healing.HealAnimRec:FireServer() end)
+    lastHealDebug.healAnimRec = "sent"
 
-    -- 5. Terima animasi heal receiver (animasi bangun)
-    local animRecOk = fireRemote({"Healing", "HealAnimRec"})
-    lastHealDebug.healAnimRec = animRecOk and "OK" or "NOT_FOUND"
+    pcall(function() ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote") end)
+    lastHealDebug.stopEmote = "sent"
 
-    -- 6. Stop animasi sekarat (EmoteHandler)
-    local emoteOk = false
-    local emoteR = findRemote("EmoteHandler")
-    if not emoteR then emoteR = findRemote("Game", "EmoteHandler") end
-    if emoteR then
-        emoteOk = pcall(function() emoteR:FireServer("StopEmote") end)
-    end
-    lastHealDebug.stopEmote = emoteOk and "OK" or "NOT_FOUND"
+    pcall(function() ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer) end)
+    lastHealDebug.healReset = "sent"
 
-    -- 7. Reset knock state + restore HP di SERVER (KUNCI UTAMA!)
-    lastHealDebug.healReset = fireRemote({"Healing", "Reset"}, LocalPlayer) and "OK" or "FAIL"
+    pcall(function() ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char) end)
+    lastHealDebug.skillCheck = "sent"
 
-    -- 8. Bypass skill check
-    lastHealDebug.skillCheck = fireRemote({"Healing", "SkillCheckResultEvent"}, "neutral", 0, char) and "OK" or "FAIL"
-
-    -- 9. Hapus efek darah di screen
-    lastHealDebug.displayBlood = fireRemote({"Healing", "DisplayBlood"}) and "OK" or "FAIL"
+    pcall(function() ReplicatedStorage.Remotes.Healing.DisplayBlood:FireServer() end)
+    lastHealDebug.displayBlood = "sent"
 end
 
--- Speed Self Revive — cepat, kirim 3x burst
+-- Speed Self Revive: 3x burst cepat
 local function speedSelfRevive()
-    WindUI:Notify({Title = "Revive", Content = "Burst 3x dimulai...", Duration = 1, Icon = "zap"})
     for i = 1, 3 do
         sendSelfHeal()
         if i < 3 then task.wait(0.08) end
@@ -3054,44 +3012,40 @@ local function speedSelfRevive()
     WindUI:Notify({Title = "Revive", Content = "3x Burst selesai! Karakter bangun...", Duration = 1.5, Icon = "heart"})
 end
 
--- Force Revive — agresif, spam remote berkali-kali
+-- Force Revive: 5x spam agresif
 local function forceRevive()
-    WindUI:Notify({Title = "Force Revive", Content = "5x Force Heal dimulai...", Duration = 1, Icon = "zap"})
     for i = 1, 5 do
         sendSelfHeal()
         if i < 5 then task.wait(0.1) end
     end
-    WindUI:Notify({Title = "Force Revive", Content = "5x Force selesai! Bangun paksa...", Duration = 1.5, Icon = "heart"})
+    WindUI:Notify({Title = "Force Revive", Content = "5x Force selesai! Bangun paksa...", Duration = 1.5, Icon = "zap"})
 end
 
--- Cek apakah player dalam state KNOCK
+-- Cek apakah player dalam state KNOCK (HP < 50 atau humanoid state knocked)
 local function isKnocked()
     local char = LocalPlayer.Character
     if not char then return false end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return false end
-    local hp = 100
-    pcall(function() hp = hum.Health end)
-    if hp < 50 then return true end
-    local state = Enum.HumanoidStateType.Running
-    pcall(function() state = hum:GetState() end)
+    -- Game VD: HP < 50 = knocked
+    if hum.Health < 50 then return true end
+    -- Fallback: cek humanoid state
+    local state = hum:GetState()
     if state == Enum.HumanoidStateType.FallingDown
     or state == Enum.HumanoidStateType.PlatformStanding
     or state == Enum.HumanoidStateType.Dead then
         return true
     end
+    -- Cek attribute Crouchingserver (kalau true = injured/sekarat)
     local root = char:FindFirstChild("HumanoidRootPart")
-    if root then
-        local crouch = false
-        pcall(function() crouch = root:GetAttribute("Crouchingserver") end)
-        if crouch == true then return true end
+    if root and root:GetAttribute("Crouchingserver") == true then
+        return true
     end
     return false
 end
 
--- ════ TOGGLE: Auto Self Revive ════
 SurTab:Toggle({
-    Title = "Auto Self Revive",
+    Title = "Auto Self Revive (saat knock)",
     Desc  = "Otomatis bangun saat knocked. Client + Server combo!",
     Value = false,
     Callback = function(v)
@@ -3113,10 +3067,10 @@ SurTab:Toggle({
     end
 })
 
--- ════ TOGGLE: Auto Speed Revive ════
+-- Auto Speed Revive
 SurTab:Toggle({
     Title = "Auto Speed Revive",
-    Desc  = "Saat knock, spam heal 3x cepat. Lebih agresif dari Auto Self Revive.",
+    Desc  = "Saat knock, spam heal 3x cepat. Lebih agresif!",
     Value = false,
     Callback = function(v)
         autoSpeedReviveEnabled = v
@@ -3136,7 +3090,7 @@ SurTab:Toggle({
     end
 })
 
--- ════ BUTTON: Instant Revive (Burst) ════
+-- Instant Revive (Burst 3x)
 SurTab:Button({
     Title = "Instant Revive (Burst 3x)",
     Desc  = "Langsung bangun! 3x heal cepat. Tekan saat knock.",
@@ -3146,7 +3100,7 @@ SurTab:Button({
     end
 })
 
--- ════ BUTTON: Force Revive (Agresif) ════
+-- Force Revive (Agresif 5x)
 SurTab:Button({
     Title = "Force Revive (Agresif 5x)",
     Desc  = "Spam 5x heal. Untuk knock yang bandel!",
@@ -3156,7 +3110,7 @@ SurTab:Button({
     end
 })
 
--- ════ BUTTON: Instant Self Heal ════
+-- Instant Self Heal
 SurTab:Button({
     Title = "Instant Self Heal",
     Desc  = "Heal 1x saja. Untuk damage biasa (belum knock).",
@@ -3167,7 +3121,7 @@ SurTab:Button({
     end
 })
 
--- ════ BUTTON: Debug Dump ════
+-- Debug Dump
 SurTab:Button({
     Title = "Debug Dump",
     Desc  = "Tampilkan info heal terakhir di console (F9).",
@@ -3176,37 +3130,19 @@ SurTab:Button({
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         local root = char and char:FindFirstChild("HumanoidRootPart")
         print("======= HEAL DEBUG =======")
-        local hpStr = "N/A"
-        pcall(function() hpStr = tostring(math.floor(hum.Health)) .. "/" .. tostring(math.floor(hum.MaxHealth)) end)
-        print("HP: " .. hpStr)
-        local stateStr = "N/A"
-        pcall(function() stateStr = tostring(hum:GetState()) end)
-        print("State: " .. stateStr)
-        local crouchStr = "N/A"
-        pcall(function() crouchStr = tostring(root:GetAttribute("Crouchingserver")) end)
-        print("Crouchingserver: " .. crouchStr)
+        if hum then
+            print("HP: " .. tostring(math.floor(hum.Health)) .. "/" .. tostring(math.floor(hum.MaxHealth)))
+            print("State: " .. tostring(hum:GetState()))
+        else
+            print("HP: N/A")
+        end
+        if root then
+            print("Crouchingserver: " .. tostring(root:GetAttribute("Crouchingserver")))
+        end
         print("IsKnocked: " .. tostring(isKnocked()))
         print("Last Heal Results:")
         for k, v in pairs(lastHealDebug) do
             print("  " .. tostring(k) .. " = " .. tostring(v))
-        end
-        print("Remote Check:")
-        local remotePaths = {
-            {"Healing", "Stophealing"},
-            {"Healing", "Reset"},
-            {"Healing", "HealAnim"},
-            {"Healing", "HealAnimRec"},
-            {"Healing", "HealEvent"},
-            {"Healing", "SkillCheckResultEvent"},
-            {"Healing", "DisplayBlood"},
-            {"Collision", "EnableCollision"},
-            {"Mechanics", "Status", "ChangeAttribute"},
-        }
-        for _, rp in ipairs(remotePaths) do
-            local r = findRemote(unpack(rp))
-            local pathStr = ""
-            for _, n in ipairs(rp) do pathStr = pathStr .. n .. "/" end
-            print("  " .. pathStr .. " = " .. (r and "EXISTS" or "NOT_FOUND"))
         end
         print("======= END DEBUG =======")
         WindUI:Notify({Title = "Debug", Content = "Dump ke console (F9). Lihat Output!", Duration = 3, Icon = "bug"})
@@ -3560,7 +3496,7 @@ SurTab:Button({
 })
 
 -- ============================================================
--- SECTION INSTANT HEAL & REVIVE — HEAL PLAYER LAIN
+-- HEAL PLAYER LAIN
 -- ============================================================
 -- HealEvent(HRP, false) = heal orang LAIN (server accept!)
 -- HealEvent(HRP, true)  = revive dari knocked (orang lain)
@@ -3569,7 +3505,7 @@ SurTab:Section({ Title = "Heal Player Lain", Icon = "heart" })
 
 SurTab:Button({
     Title = "Revive Player Terdekat",
-    Desc  = "Heal/Revive player lain yang paling dekat. HealEvent ke server.",
+    Desc  = "Heal/Revive player lain yang paling dekat.",
     Callback = function()
         local char = LocalPlayer.Character
         if not char then
@@ -3596,13 +3532,10 @@ SurTab:Button({
             local th = closest.Character:FindFirstChildOfClass("Humanoid")
             if tr and th then
                 local isDowned = (th.Health / th.MaxHealth) < 0.5
-                -- Heal player lain — HealEvent(HRP, isDowned)
-                fireRemote({"Healing", "HealEvent"}, tr, isDowned)
-                -- Bypass skill check untuk player lain
-                fireRemote({"Healing", "SkillCheckResultEvent"}, "neutral", 0, closest.Character)
-                -- Mainkan animasi heal
-                fireRemote({"Healing", "HealAnim"})
-                fireRemote({"Healing", "HealAnimRec"})
+                pcall(function() ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(tr, isDowned) end)
+                pcall(function() ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, closest.Character) end)
+                pcall(function() ReplicatedStorage.Remotes.Healing.HealAnim:FireServer() end)
+                pcall(function() ReplicatedStorage.Remotes.Healing.HealAnimRec:FireServer() end)
                 WindUI:Notify({Title = "Heal", Content = "Heal dikirim ke " .. closest.Name .. "!", Duration = 2, Icon = "heart"})
             end
         else
