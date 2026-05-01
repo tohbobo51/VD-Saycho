@@ -3432,12 +3432,12 @@ SurTab:Button({
 })
 
 -- ============================================================
--- HEAL PLAYER LAIN
+-- HEAL & REVIVE PLAYER LAIN
 -- ============================================================
--- HealEvent(HRP, false) = heal orang LAIN (server accept!)
--- HealEvent(HRP, true)  = revive dari knocked (orang lain)
+-- HealEvent(HRP, false) = HEAL orang LAIN (sembuhkan luka, HP naik)
+-- HealEvent(HRP, true)  = REVIVE orang LAIN (bangunkan dari knocked)
 -- ⚠️ TIDAK BISA untuk diri sendiri — server reject kalau HRP milik sendiri
-SurTab:Section({ Title = "Heal Player Lain", Icon = "heart" })
+SurTab:Section({ Title = "Heal & Revive Player Lain", Icon = "heart" })
 
 local function refreshHealPlayerDropdown()
     local options = {}
@@ -3472,23 +3472,35 @@ local function findPlayerFromDropdown(dropdownName)
     return nil
 end
 
--- helper: heal 1x ke player lain
+-- helper: heal 1x ke player lain (HealEvent HRP, false = heal biasa)
 local function healOtherPlayer(targetPl)
     if not targetPl or not targetPl.Character then return false end
     local tr = targetPl.Character:FindFirstChild("HumanoidRootPart")
-    local th = targetPl.Character:FindFirstChildOfClass("Humanoid")
-    if not tr or not th then return false end
-    local isDowned = (th.Health / th.MaxHealth) < 0.5
-    pcall(function() ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(tr, isDowned) end)
+    if not tr then return false end
+    pcall(function() ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(tr, false) end)
     pcall(function() ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, targetPl.Character) end)
     pcall(function() ReplicatedStorage.Remotes.Healing.HealAnim:FireServer() end)
     pcall(function() ReplicatedStorage.Remotes.Healing.HealAnimRec:FireServer() end)
     return true
 end
 
+-- helper: revive 1x ke player lain (HealEvent HRP, true = revive dari knock)
+local function reviveOtherPlayer(targetPl)
+    if not targetPl or not targetPl.Character then return false end
+    local tr = targetPl.Character:FindFirstChild("HumanoidRootPart")
+    if not tr then return false end
+    pcall(function() ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(tr, true) end)
+    pcall(function() ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, targetPl.Character) end)
+    pcall(function() ReplicatedStorage.Remotes.Healing.HealAnim:FireServer() end)
+    pcall(function() ReplicatedStorage.Remotes.Healing.HealAnimRec:FireServer() end)
+    pcall(function() ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer() end)
+    return true
+end
+
+-- ─── HEAL PLAYER LAIN (biasa, HP naik) ───
 SurTab:Button({
-    Title = "Heal Player Pilihan (1x)",
-    Desc  = "Heal/Revive player yang dipilih di dropdown.",
+    Title = "Heal Player (1x)",
+    Desc  = "Heal biasa ke player yang dipilih. HealEvent(HRP, false).",
     Callback = function()
         local target = findPlayerFromDropdown(selectedHealPlayer)
         if not target then
@@ -3504,8 +3516,8 @@ SurTab:Button({
 })
 
 SurTab:Button({
-    Title = "Heal Player Pilihan (30x)",
-    Desc  = "Spam heal 30x ke player yang dipilih. Untuk knock yang bandel!",
+    Title = "Heal Player (30x)",
+    Desc  = "Spam heal 30x ke player yang dipilih. Untuk damage yang bandel!",
     Callback = function()
         local target = findPlayerFromDropdown(selectedHealPlayer)
         if not target then
@@ -3521,6 +3533,46 @@ SurTab:Button({
                 if i < 30 then task.wait(0.05) end
             end
             WindUI:Notify({Title = "Heal 30x", Content = success .. "x heal dikirim ke " .. target.Name .. "!", Duration = 2, Icon = "heart"})
+        end)
+    end
+})
+
+-- ─── REVIVE PLAYER LAIN (dari knocked) ───
+SurTab:Button({
+    Title = "Revive Player (1x)",
+    Desc  = "Revive dari knocked ke player yang dipilih. HealEvent(HRP, true).",
+    Callback = function()
+        local target = findPlayerFromDropdown(selectedHealPlayer)
+        if not target then
+            WindUI:Notify({Title = "Revive", Content = "Pilih player dulu dari dropdown!", Duration = 2, Icon = "alert-circle"})
+            return
+        end
+        if reviveOtherPlayer(target) then
+            WindUI:Notify({Title = "Revive", Content = "Revive dikirim ke " .. target.Name .. "!", Duration = 2, Icon = "heart"})
+        else
+            WindUI:Notify({Title = "Revive", Content = "Gagal revive " .. target.Name .. ". Karakter tidak ditemukan.", Duration = 2, Icon = "alert-circle"})
+        end
+    end
+})
+
+SurTab:Button({
+    Title = "Revive Player (30x)",
+    Desc  = "Spam revive 30x ke player yang dipilih. Untuk knock yang bandel!",
+    Callback = function()
+        local target = findPlayerFromDropdown(selectedHealPlayer)
+        if not target then
+            WindUI:Notify({Title = "Revive", Content = "Pilih player dulu dari dropdown!", Duration = 2, Icon = "alert-circle"})
+            return
+        end
+        task.spawn(function()
+            local success = 0
+            for i = 1, 30 do
+                if reviveOtherPlayer(target) then
+                    success = success + 1
+                end
+                if i < 30 then task.wait(0.05) end
+            end
+            WindUI:Notify({Title = "Revive 30x", Content = success .. "x revive dikirim ke " .. target.Name .. "!", Duration = 2, Icon = "heart"})
         end)
     end
 })
