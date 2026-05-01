@@ -2923,22 +2923,25 @@ SurTab:Toggle({
 
 SurTab:Section({ Title = "Feature Heal", Icon = "cross" })
 
--- ════ AUTO SELF REVIVE (via Healing/Reset + EnableCollision + ChangeAttribute) ═══
--- MEKANIK GAME VD:
+-- ════ SELF HEAL / REVIVE ═══
+-- Game VD mechanics:
 --   HP < 50  = KNOCKED (bisa di-carry, di-hook killer)
 --   HP 50-100 = ALIVE (normal, bisa jalan/tembak)
 --
--- RemoteSpy SAAT REVIVE DARI KNOCK (orang lain revive kita):
---   1. Collision.EnableCollision:FireServer() = RE-ENABLE COLLISION
---   2. EmoteHandler("StopEmote") = stop animasi sekarat
---   3. Healing.Reset(Player) = reset knock state + restore HP
+-- Server-side heal sequence (dari RemoteSpy):
+--   REVIVE dari KNOCK:
+--     1. Collision.EnableCollision:FireServer()
+--     2. EmoteHandler("StopEmote")
+--     3. Healing.Reset(Player)
 --
--- RemoteSpy SAAT HEAL FULL HP (bukan dari knock, darah berkurang saja):
---   1. ChangeAttribute("Crouchingserver", false) = hapus state injured/crouching
---   2. EmoteHandler("StopEmote") = stop animasi sekarat
---   3. Healing.Reset(Player) = reset state + restore HP
+--   HEAL partial damage:
+--     1. ChangeAttribute("Crouchingserver", false)
+--     2. EmoteHandler("StopEmote")
+--     3. Healing.Reset(Player)
 --
--- Jadi ada 2 skenario berbeda! Kita kirim SEMUA remote supaya cover kedua skenario
+--   Kita kirim SEMUA remote supaya cover kedua skenario.
+--   Client-side HP set hanya visual, server-side HP = Healing.Reset.
+--   Penting: kirim remote dengan urutan benar + delay kecil supaya server proses.
 local autoSelfReviveEnabled = false
 
 local function sendSelfHeal()
@@ -2947,12 +2950,22 @@ local function sendSelfHeal()
     local hum = char:FindFirstChildOfClass("Humanoid")
     local root = char:FindFirstChild("HumanoidRootPart")
 
-    -- Set HP ke MaxHealth
-    if hum then
-        pcall(function() hum.Health = hum.MaxHealth end)
+    -- ═══ Step 1: Stop healing yang sedang berjalan (kalau ada) ═══
+    pcall(function() ReplicatedStorage.Remotes.Healing.Stophealing:FireServer() end)
+
+    -- ═══ Step 2: Re-enable collision (WAJIB saat revive dari knock) ═══
+    pcall(function() ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer() end)
+
+    -- ═══ Step 3: Hapus injured/crouching attribute ═══
+    pcall(function() ReplicatedStorage.Remotes.Mechanics.Status.ChangeAttribute:FireServer("Crouchingserver", false) end)
+    if root then
+        pcall(function() root:SetAttribute("Crouchingserver", false) end)
     end
 
-    -- Fix knock state
+    -- ═══ Step 4: Stop emote sekarat ═══
+    pcall(function() ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote") end)
+
+    -- ═══ Step 5: Fix knock state di client ═══
     if hum then
         pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
         pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, false) end)
@@ -2960,35 +2973,38 @@ local function sendSelfHeal()
         pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
     end
 
-    -- Hapus injured attribute
-    if root then
-        pcall(function() root:SetAttribute("Crouchingserver", false) end)
-    end
+    -- ═══ Step 6: Healing animations (proses heal terlihat) ═══
+    pcall(function() ReplicatedStorage.Remotes.Healing.HealAnim:FireServer() end)
+    pcall(function() ReplicatedStorage.Remotes.Healing.HealAnimRec:FireServer() end)
 
-    -- Remote calls ke server (fix: pakai Mechanics.Status.ChangeAttribute)
-    pcall(function() ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer() end)
-    pcall(function() ReplicatedStorage.Remotes.Mechanics.Status.ChangeAttribute:FireServer("Crouchingserver", false) end)
-    pcall(function() ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote") end)
-    pcall(function() ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer) end)
+    -- ═══ Step 7: Kirim SkillCheckResult (auto-pass skill check) ═══
     pcall(function() ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char) end)
+
+    -- ═══ Step 8: Reset HP server-side (INI YANG BIKIN HP PENUH DI SERVER) ═══
+    pcall(function() ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer) end)
+
+    -- ═══ Step 9: Hapus efek darah di screen ═══
+    pcall(function() ReplicatedStorage.Remotes.Healing.DisplayBlood:FireServer() end)
+
+    -- ═══ Step 10: Set HP client-side (visual) ═══
+    if hum then
+        pcall(function() hum.Health = hum.MaxHealth end)
+    end
 end
 
--- Cek apakah player dalam state KNOCK (HP < 50 atau humanoid state knocked)
+-- Cek apakah player dalam state KNOCK
 local function isKnocked()
     local char = LocalPlayer.Character
     if not char then return false end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return false end
-    -- Game VD: HP < 50 = knocked
     if hum.Health < 50 then return true end
-    -- Fallback: cek humanoid state
     local state = hum:GetState()
     if state == Enum.HumanoidStateType.FallingDown
     or state == Enum.HumanoidStateType.PlatformStanding
     or state == Enum.HumanoidStateType.Dead then
         return true
     end
-    -- Cek attribute Crouchingserver (kalau true = injured/sekarat)
     local root = char:FindFirstChild("HumanoidRootPart")
     if root and root:GetAttribute("Crouchingserver") == true then
         return true
@@ -2998,7 +3014,7 @@ end
 
 SurTab:Toggle({
     Title = "Auto Self Revive (saat knock)",
-    Desc  = "Otomatis bangun saat knocked. Client + Server combo!",
+    Desc  = "Otomatis bangun saat knocked. Kirim remote lengkap ke server!",
     Value = false,
     Callback = function(v)
         autoSelfReviveEnabled = v
@@ -3007,6 +3023,9 @@ SurTab:Toggle({
                 while autoSelfReviveEnabled do
                     if isKnocked() then
                         sendSelfHeal()
+                        task.wait(0.3)
+                        -- Burst ke-2 kalau masih knocked
+                        if isKnocked() then sendSelfHeal() end
                     end
                     task.wait(0.5)
                 end
@@ -3020,16 +3039,17 @@ SurTab:Toggle({
 
 SurTab:Button({
     Title = "Instant Full Heal (Self)",
-    Desc  = "Langsung set HP = MaxHealth + fix knock state + remote backup.",
+    Desc  = "Heal lengkap: StopHealing + Collision + ChangeAttribute + Anim + SkillCheck + Reset + HP",
     Callback = function()
         if not LocalPlayer.Character then
             WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
             return
         end
         sendSelfHeal()
-        -- Delayed burst 1x lagi biar makin pasti
-        task.delay(0.5, function() sendSelfHeal() end)
-        WindUI:Notify({Title = "Heal", Content = "Full Heal! HP = MaxHealth + Fix Knock + Remote Backup", Duration = 2, Icon = "heart"})
+        -- Burst ke-2 dan ke-3 dengan delay
+        task.delay(0.3, function() sendSelfHeal() end)
+        task.delay(0.6, function() sendSelfHeal() end)
+        WindUI:Notify({Title = "Heal", Content = "3x Full Heal dikirim! HP harus penuh di server.", Duration = 2, Icon = "heart"})
     end
 })
 
@@ -3258,23 +3278,6 @@ SurTab:Section({ Title = "Vault / Window", Icon = "wind" })
 local fastVaultEnabled    = false
 local vaultTouchConns     = {}
 local vaultMapConn        = nil
-local remWindowCache      = nil
-
-local function getWindowRemotes()
-    if remWindowCache then return remWindowCache end
-    local ok, r = pcall(function()
-        local rem = ReplicatedStorage
-            :WaitForChild("Remotes", 5)
-            :WaitForChild("Window", 5)
-        return {
-            fastVault     = rem:WaitForChild("fastvault", 5),
-            vaultEvent    = rem:WaitForChild("VaultEvent", 5),
-            vaultComplete = rem:WaitForChild("VaultCompleteEvent", 5),
-        }
-    end)
-    if ok then remWindowCache = r; return r end
-    return nil
-end
 
 local function getAllVaultTriggers()
     local found = {}
@@ -3293,7 +3296,49 @@ local function disconnectVaultConns()
     vaultTouchConns = {}
 end
 
+-- Cari VaultTrigger terdekat dari posisi player
+local function findNearestVaultTrigger()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
+    local nearest, nearestDist = nil, 30 -- max 30 studs
+    for _, t in ipairs(getAllVaultTriggers()) do
+        local d = (t.Position - root.Position).Magnitude
+        if d < nearestDist then
+            nearestDist = d
+            nearest = t
+        end
+    end
+    return nearest
+end
+
+-- Fast vault: kirim semua remote dengan urutan yang benar
+local function doFastVault(trigger)
+    if not trigger then return end
+    -- Sequence yang benar dari RemoteSpy:
+    -- 1. VaultEvent(trigger, true) = mulai vault
+    -- 2. fastvault(Player) = skip animasi, langsung selesai
+    -- 3. VaultCompleteEvent(trigger, false) = selesai vault
+    -- 4. VaultAnim = animasi vault (optional)
+    -- 5. Vaultbindable = client-side vault trigger
+    pcall(function() ReplicatedStorage.Remotes.Window.VaultEvent:FireServer(trigger, true) end)
+    pcall(function() ReplicatedStorage.Remotes.Window.fastvault:FireServer(LocalPlayer) end)
+    pcall(function() ReplicatedStorage.Remotes.Window.VaultAnim:FireServer() end)
+    pcall(function() ReplicatedStorage.Remotes.Window.VaultCompleteEvent:FireServer(trigger, false) end)
+    pcall(function() ReplicatedStorage.Remotes.Window.VaultCompleteEvent:FireServer(trigger, true) end)
+    pcall(function()
+        local vb = ReplicatedStorage.Remotes.Window:FindFirstChild("Vaultbindable")
+        if vb then vb:FireServer() end
+    end)
+    pcall(function()
+        local vp1 = ReplicatedStorage.Remotes.Window:FindFirstChild("VaultComplete Eventpart1")
+        if vp1 then vp1:FireServer() end
+    end)
+end
+
 local function hookOneVaultTrigger(trigger)
+    local lastVaultTime = 0
     local conn = trigger.Touched:Connect(function(part)
         if not fastVaultEnabled then return end
         local char = LocalPlayer.Character
@@ -3306,17 +3351,10 @@ local function hookOneVaultTrigger(trigger)
             p = p.Parent
         end
         if not isOurs then return end
-
-        local rems = getWindowRemotes()
-        if not rems then return end
-
-        -- Fast Vault: kirim semua sinyal sekaligus untuk vault tercepat
-        pcall(function()
-            rems.fastVault:FireServer(LocalPlayer)
-            rems.vaultEvent:FireServer(trigger, true)
-            task.wait(0.03)
-            rems.vaultComplete:FireServer(trigger, false)
-        end)
+        -- Debounce 1 detik supaya tidak double vault
+        if tick() - lastVaultTime < 1 then return end
+        lastVaultTime = tick()
+        doFastVault(trigger)
     end)
     table.insert(vaultTouchConns, conn)
 end
@@ -3359,6 +3397,20 @@ SurTab:Toggle({
     end
 })
 
+SurTab:Button({
+    Title    = "Manual Fast Vault",
+    Desc     = "Tekan untuk vault terdekat (max 30 studs). Gunakan kalau auto vault tidak jalan.",
+    Callback = function()
+        local trigger = findNearestVaultTrigger()
+        if trigger then
+            doFastVault(trigger)
+            WindUI:Notify({Title = "Vault", Content = "Fast Vault dikirim!", Duration = 1.5, Icon = "wind"})
+        else
+            WindUI:Notify({Title = "Vault", Content = "Tidak ada vault terdekat! Mendekati jendela dulu.", Duration = 2, Icon = "alert-circle"})
+        end
+    end
+})
+
 -- ─── Stop Emote ───────────────────────────────────────────────
 SurTab:Section({ Title = "Emote", Icon = "smile" })
 
@@ -3387,44 +3439,101 @@ SurTab:Button({
 -- ⚠️ TIDAK BISA untuk diri sendiri — server reject kalau HRP milik sendiri
 SurTab:Section({ Title = "Heal Player Lain", Icon = "heart" })
 
+local function refreshHealPlayerDropdown()
+    local options = {}
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= LocalPlayer then
+            local role = (pl.Team and pl.Team.Name) or "?"
+            table.insert(options, pl.Name .. " [" .. role .. "]")
+        end
+    end
+    return #options > 0 and options or {"(Tidak ada player lain)"}
+end
+
+local selectedHealPlayer = ""
+
+local healPlayerDropdown = SurTab:Dropdown({
+    Title    = "Pilih Player",
+    Values   = refreshHealPlayerDropdown(),
+    Value    = "",
+    Callback = function(selected)
+        selectedHealPlayer = selected
+    end
+})
+
+-- helper: cari player object dari dropdown name
+local function findPlayerFromDropdown(dropdownName)
+    if dropdownName == "" or dropdownName == "(Tidak ada player lain)" then return nil end
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= LocalPlayer and dropdownName:find(pl.Name, 1, true) then
+            return pl
+        end
+    end
+    return nil
+end
+
+-- helper: heal 1x ke player lain
+local function healOtherPlayer(targetPl)
+    if not targetPl or not targetPl.Character then return false end
+    local tr = targetPl.Character:FindFirstChild("HumanoidRootPart")
+    local th = targetPl.Character:FindFirstChildOfClass("Humanoid")
+    if not tr or not th then return false end
+    local isDowned = (th.Health / th.MaxHealth) < 0.5
+    pcall(function() ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(tr, isDowned) end)
+    pcall(function() ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, targetPl.Character) end)
+    pcall(function() ReplicatedStorage.Remotes.Healing.HealAnim:FireServer() end)
+    pcall(function() ReplicatedStorage.Remotes.Healing.HealAnimRec:FireServer() end)
+    return true
+end
+
 SurTab:Button({
-    Title = "Revive Player Terdekat",
-    Desc  = "Heal/Revive player lain yang paling dekat.",
+    Title = "Heal Player Pilihan (1x)",
+    Desc  = "Heal/Revive player yang dipilih di dropdown.",
     Callback = function()
-        local char = LocalPlayer.Character
-        if not char then
-            WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
+        local target = findPlayerFromDropdown(selectedHealPlayer)
+        if not target then
+            WindUI:Notify({Title = "Heal", Content = "Pilih player dulu dari dropdown!", Duration = 2, Icon = "alert-circle"})
             return
         end
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-
-        local closest, closestDist = nil, math.huge
-        for _, pl in ipairs(Players:GetPlayers()) do
-            if pl ~= LocalPlayer and pl.Character then
-                local tr = pl.Character:FindFirstChild("HumanoidRootPart")
-                local th = pl.Character:FindFirstChildOfClass("Humanoid")
-                if tr and th and th.Health < th.MaxHealth and th.Health > 0 then
-                    local d = (tr.Position - root.Position).Magnitude
-                    if d < closestDist then closestDist = d; closest = pl end
-                end
-            end
-        end
-
-        if closest and closest.Character then
-            local tr = closest.Character:FindFirstChild("HumanoidRootPart")
-            local th = closest.Character:FindFirstChildOfClass("Humanoid")
-            if tr and th then
-                local isDowned = (th.Health / th.MaxHealth) < 0.5
-                pcall(function() ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(tr, isDowned) end)
-                pcall(function() ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, closest.Character) end)
-                pcall(function() ReplicatedStorage.Remotes.Healing.HealAnim:FireServer() end)
-                pcall(function() ReplicatedStorage.Remotes.Healing.HealAnimRec:FireServer() end)
-                WindUI:Notify({Title = "Heal", Content = "Heal dikirim ke " .. closest.Name .. "!", Duration = 2, Icon = "heart"})
-            end
+        if healOtherPlayer(target) then
+            WindUI:Notify({Title = "Heal", Content = "Heal dikirim ke " .. target.Name .. "!", Duration = 2, Icon = "heart"})
         else
-            WindUI:Notify({Title = "Heal", Content = "Tidak ada player terdekat yang butuh heal.", Duration = 2, Icon = "heart"})
+            WindUI:Notify({Title = "Heal", Content = "Gagal heal " .. target.Name .. ". Karakter tidak ditemukan.", Duration = 2, Icon = "alert-circle"})
         end
+    end
+})
+
+SurTab:Button({
+    Title = "Heal Player Pilihan (30x)",
+    Desc  = "Spam heal 30x ke player yang dipilih. Untuk knock yang bandel!",
+    Callback = function()
+        local target = findPlayerFromDropdown(selectedHealPlayer)
+        if not target then
+            WindUI:Notify({Title = "Heal", Content = "Pilih player dulu dari dropdown!", Duration = 2, Icon = "alert-circle"})
+            return
+        end
+        task.spawn(function()
+            local success = 0
+            for i = 1, 30 do
+                if healOtherPlayer(target) then
+                    success = success + 1
+                end
+                if i < 30 then task.wait(0.05) end
+            end
+            WindUI:Notify({Title = "Heal 30x", Content = success .. "x heal dikirim ke " .. target.Name .. "!", Duration = 2, Icon = "heart"})
+        end)
+    end
+})
+
+SurTab:Button({
+    Title = "Refresh Player List",
+    Desc  = "Perbarui daftar player di dropdown.",
+    Callback = function()
+        pcall(function()
+            healPlayerDropdown:Refresh(refreshHealPlayerDropdown(), false)
+            selectedHealPlayer = ""
+            WindUI:Notify({Title = "Refresh", Content = "Daftar player diperbarui.", Duration = 1.5, Icon = "refresh-cw"})
+        end)
     end
 })
 
