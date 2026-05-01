@@ -3162,6 +3162,81 @@ SurTab:Button({
         WindUI:Notify({Title = "Heal", Content = "3x Full Heal dikirim! HP harus penuh di server.", Duration = 2, Icon = "heart"})
     end
 })
+
+-- ── Auto Perfect Heal ──
+-- Otomatis pass skill check saat heal diri sendiri atau orang lain
+-- Sembunyikan skill check GUI juga
+local autoPerfectHealEnabled = false
+
+SurTab:Toggle({
+    Title = "Auto Perfect Heal",
+    Desc  = "Otomatis pass skill check saat heal. Skill check GUI disembunyikan.",
+    Value = false,
+    Callback = function(v)
+        autoPerfectHealEnabled = v
+        if v then
+            task.spawn(function()
+                while autoPerfectHealEnabled do
+                    -- Sembunyikan skill check GUI
+                    pcall(function()
+                        local gui = LocalPlayer:FindFirstChild("PlayerGui")
+                        if gui then
+                            local scGui = gui:FindFirstChild("SkillCheckPromptGui")
+                            if scGui and scGui:FindFirstChild("Check") then
+                                scGui.Check.Visible = false
+                            end
+                        end
+                    end)
+                    -- Auto-pass healing skill check
+                    pcall(function()
+                        local healing = ReplicatedStorage:FindFirstChild("Remotes")
+                            and ReplicatedStorage.Remotes:FindFirstChild("Healing")
+                        if healing then
+                            local sc = healing:FindFirstChild("SkillCheckResultEvent")
+                            if sc then
+                                local char = LocalPlayer.Character
+                                if char then
+                                    sc:FireServer("neutral", 0, char)
+                                end
+                            end
+                            -- Juga pass generator skill check kalau sedang repair
+                            local gen = ReplicatedStorage:FindFirstChild("Remotes")
+                                and ReplicatedStorage.Remotes:FindFirstChild("Generator")
+                            if gen then
+                                local gsc = gen:FindFirstChild("SkillCheckResultEvent")
+                                if gsc then
+                                    local folders = getMapFolders()
+                                    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                                    if root then
+                                        for _, folder in ipairs(folders) do
+                                            for _, g in ipairs(folder:GetChildren()) do
+                                                if g.Name == "Generator" and g:IsA("Model") then
+                                                    local primary = g:FindFirstChild("PrimaryPart") or g:FindFirstChildWhichIsA("BasePart")
+                                                    if primary and (root.Position - primary.Position).Magnitude <= 15 then
+                                                        for i = 1, 4 do
+                                                            local point = g:FindFirstChild("GeneratorPoint" .. i)
+                                                            if point then
+                                                                gsc:FireServer("success", 1, g, point)
+                                                            end
+                                                        end
+                                                    end
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end)
+                    task.wait(0.3)
+                end
+            end)
+            WindUI:Notify({Title = "Auto Heal", Content = "Perfect Heal aktif! Skill check auto-pass.", Duration = 2, Icon = "heart"})
+        else
+            WindUI:Notify({Title = "Auto Heal", Content = "Dimatikan.", Duration = 2, Icon = "heart"})
+        end
+    end
+})
 end -- FEATURE HEAL
 
 SurTab:Section({ Title = "Feature Cheat", Icon = "bug" })
