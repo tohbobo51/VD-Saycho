@@ -2960,9 +2960,20 @@ local function sendSelfHeal()
     safeFire("Healing", "Stophealing")
     -- Re-enable collision (WAJIB saat revive dari knock)
     safeFire("Collision", "EnableCollision")
-    -- Hapus injured/crouching attribute
+    -- Hapus SEMUA knock-related attributes via server remote
     safeFire("Mechanics", "Status", "ChangeAttribute", nil, "Crouchingserver", false)
-    if root then pcall(function() root:SetAttribute("Crouchingserver", false) end) end
+    safeFire("Mechanics", "Status", "ChangeAttribute", nil, "Knocked", false)
+    safeFire("Mechanics", "Status", "ChangeAttribute", nil, "Downed", false)
+    safeFire("Mechanics", "Status", "ChangeAttribute", nil, "Injured", false)
+    safeFire("Mechanics", "Status", "ChangeAttribute", nil, "IsDown", false)
+    -- Set attribute langsung di client juga
+    if root then
+        pcall(function() root:SetAttribute("Crouchingserver", false) end)
+        pcall(function() root:SetAttribute("Knocked", false) end)
+        pcall(function() root:SetAttribute("Downed", false) end)
+        pcall(function() root:SetAttribute("Injured", false) end)
+        pcall(function() root:SetAttribute("IsDown", false) end)
+    end
     -- Stop emote sekarat
     safeFire("EmoteHandler", nil, nil, nil, "StopEmote")
     -- Fix knock state di client
@@ -2979,6 +2990,10 @@ local function sendSelfHeal()
     safeFire("Healing", "SkillCheckResultEvent", nil, nil, "neutral", 0, char)
     -- Reset HP server-side (YANG BIKIN HP PENUH DI SERVER)
     safeFire("Healing", "Reset", nil, nil, LocalPlayer)
+    -- Fire HealEvent(HRP, true) = REVIVE diri sendiri dari knocked
+    if root then
+        safeFire("Healing", "HealEvent", nil, nil, root, true)
+    end
     -- Hapus efek darah
     safeFire("Healing", "DisplayBlood")
     -- Set HP client-side
@@ -2998,8 +3013,11 @@ local function isKnocked()
         return true
     end
     local root = char:FindFirstChild("HumanoidRootPart")
-    if root and root:GetAttribute("Crouchingserver") == true then
-        return true
+    if root then
+        if root:GetAttribute("Crouchingserver") == true then return true end
+        if root:GetAttribute("Knocked") == true then return true end
+        if root:GetAttribute("Downed") == true then return true end
+        if root:GetAttribute("IsDown") == true then return true end
     end
     return false
 end
@@ -3030,7 +3048,7 @@ SurTab:Toggle({
 
 SurTab:Button({
     Title = "Instant Full Heal (Self)",
-    Desc  = "Heal lengkap 3x burst: StopHealing + Collision + ChangeAttribute + Anim + SkillCheck + Reset + HP",
+    Desc  = "Heal lengkap 3x burst: StopHealing + Collision + ChangeAttribute + Anim + SkillCheck + Reset + HealEvent + HP",
     Callback = function()
         if not LocalPlayer.Character then
             WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
@@ -3040,6 +3058,44 @@ SurTab:Button({
         task.delay(0.3, function() sendSelfHeal() end)
         task.delay(0.6, function() sendSelfHeal() end)
         WindUI:Notify({Title = "Heal", Content = "3x Full Heal dikirim! HP harus penuh di server.", Duration = 2, Icon = "heart"})
+    end
+})
+
+-- ── Auto Refresh Anti-Knock ──
+-- Spam sendSelfHeal setiap X detik supaya status knock selalu di-reset
+-- Killer ga bisa angkat karena server selalu nerima reset
+local autoRefreshEnabled = false
+local autoRefreshInterval = 3
+
+SurTab:Toggle({
+    Title = "Auto Refresh Anti-Knock",
+    Desc  = "Spam heal/revive otomatis setiap beberapa detik supaya status knock selalu clear. Killer tidak bisa angkat!",
+    Value = false,
+    Callback = function(v)
+        autoRefreshEnabled = v
+        if v then
+            task.spawn(function()
+                while autoRefreshEnabled do
+                    sendSelfHeal()
+                    task.wait(autoRefreshInterval)
+                end
+            end)
+            WindUI:Notify({Title = "Auto Refresh", Content = "Aktif! Setiap " .. autoRefreshInterval .. " detik.", Duration = 2, Icon = "refresh-cw"})
+        else
+            WindUI:Notify({Title = "Auto Refresh", Content = "Dimatikan.", Duration = 2, Icon = "refresh-cw"})
+        end
+    end
+})
+
+SurTab:Slider({
+    Title = "Refresh Interval (detik)",
+    Desc  = "Seberapa sering auto refresh mengirim heal. Lebih cepat = lebih aman tapi lebih lag.",
+    Value = 3,
+    Min = 1,
+    Max = 10,
+    Step = 0.5,
+    Callback = function(v)
+        autoRefreshInterval = v
     end
 })
 end -- FEATURE HEAL
