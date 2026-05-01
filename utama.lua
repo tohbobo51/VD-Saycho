@@ -3060,44 +3060,6 @@ SurTab:Button({
         WindUI:Notify({Title = "Heal", Content = "3x Full Heal dikirim! HP harus penuh di server.", Duration = 2, Icon = "heart"})
     end
 })
-
--- ── Auto Refresh Anti-Knock ──
--- Spam sendSelfHeal setiap X detik supaya status knock selalu di-reset
--- Killer ga bisa angkat karena server selalu nerima reset
-local autoRefreshEnabled = false
-local autoRefreshInterval = 3
-
-SurTab:Toggle({
-    Title = "Auto Refresh Anti-Knock",
-    Desc  = "Spam heal/revive otomatis setiap beberapa detik supaya status knock selalu clear. Killer tidak bisa angkat!",
-    Value = false,
-    Callback = function(v)
-        autoRefreshEnabled = v
-        if v then
-            task.spawn(function()
-                while autoRefreshEnabled do
-                    sendSelfHeal()
-                    task.wait(autoRefreshInterval)
-                end
-            end)
-            WindUI:Notify({Title = "Auto Refresh", Content = "Aktif! Setiap " .. autoRefreshInterval .. " detik.", Duration = 2, Icon = "refresh-cw"})
-        else
-            WindUI:Notify({Title = "Auto Refresh", Content = "Dimatikan.", Duration = 2, Icon = "refresh-cw"})
-        end
-    end
-})
-
-SurTab:Slider({
-    Title = "Refresh Interval (detik)",
-    Desc  = "Seberapa sering auto refresh mengirim heal. Lebih cepat = lebih aman tapi lebih lag.",
-    Value = 3,
-    Min = 1,
-    Max = 10,
-    Step = 0.5,
-    Callback = function(v)
-        autoRefreshInterval = v
-    end
-})
 end -- FEATURE HEAL
 
 SurTab:Section({ Title = "Feature Cheat", Icon = "bug" })
@@ -3661,17 +3623,17 @@ SurTab:Button({
     end
 })
 
-SurTab:Button({
-    Title = "Refresh Player List",
-    Desc  = "Perbarui daftar player di dropdown.",
-    Callback = function()
+-- ── Auto-refresh dropdown player setiap 5 detik ──
+task.spawn(function()
+    while true do
+        task.wait(5)
         pcall(function()
-            healPlayerDropdown:Refresh(refreshHealPlayerDropdown(), false)
-            selectedHealPlayer = ""
-            WindUI:Notify({Title = "Refresh", Content = "Daftar player diperbarui.", Duration = 1.5, Icon = "refresh-cw"})
+            if healPlayerDropdown then
+                healPlayerDropdown:Refresh(refreshHealPlayerDropdown(), false)
+            end
         end)
     end
-})
+end)
 end -- HEAL & REVIVE OTHER
 
 -- ====================== KILLER ======================
@@ -4076,23 +4038,17 @@ do
         end
     })
 
-    PlayerTab:Button({
-        Title    = "🔄 Refresh Player List",
-        Callback = function()
+    -- ── Auto-refresh dropdown teleport player setiap 5 detik ──
+    task.spawn(function()
+        while true do
+            task.wait(5)
             pcall(function()
-                -- false = jangan reset value ke item pertama
-                -- → Callback dropdown TIDAK terpicu saat refresh
-                tpDropdown:Refresh(refreshPlayerDropdown(), false)
-                selectedPlayerName = ""  -- reset pilihan supaya user pilih ulang
-                WindUI:Notify({
-                    Title    = "Refresh",
-                    Content  = "Daftar player diperbarui.",
-                    Duration = 1.5,
-                    Icon     = "refresh-cw"
-                })
+                if tpDropdown then
+                    tpDropdown:Refresh(refreshPlayerDropdown(), false)
+                end
             end)
         end
-    })
+    end)
 end
 
 -- God Mode (v17)
