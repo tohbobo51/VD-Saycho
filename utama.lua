@@ -2882,6 +2882,108 @@ SurTab:Toggle({
     end
 })
 
+local fastGenEnabled = false
+local fastGenSpeed = 3
+
+SurTab:Toggle({
+    Title = "Fast Generator",
+    Desc  = "Percepat repair generator. Spam SkillCheckResult + ProgressUpdate sesuai speed. Harus berada dekat generator!",
+    Value = false,
+    Callback = function(v)
+        fastGenEnabled = v
+        if fastGenEnabled then
+            task.spawn(function()
+                while fastGenEnabled do
+                    local char = LocalPlayer.Character
+                    local root = char and char:FindFirstChild("HumanoidRootPart")
+                    if root then
+                        local folders = getMapFolders()
+                        local closestGen, closestDist = nil, 15
+
+                        for _, folder in ipairs(folders) do
+                            for _, gen in ipairs(folder:GetChildren()) do
+                                if gen.Name == "Generator" and gen:IsA("Model") then
+                                    local primary = gen:FindFirstChild("PrimaryPart") or gen:FindFirstChildWhichIsA("BasePart")
+                                    if primary then
+                                        local dist = (root.Position - primary.Position).Magnitude
+                                        if dist <= closestDist then
+                                            closestDist = dist
+                                            closestGen = gen
+                                        end
+                                    end
+                                end
+                            end
+                        end
+
+                        if closestGen then
+                            for _ = 1, fastGenSpeed do
+                                -- SkillCheckResultEvent: auto-pass skill check
+                                pcall(function()
+                                    local scRemote = ReplicatedStorage:FindFirstChild("Remotes")
+                                        and ReplicatedStorage.Remotes:FindFirstChild("Generator")
+                                        and ReplicatedStorage.Remotes.Generator:FindFirstChild("SkillCheckResultEvent")
+                                    if scRemote then
+                                        for i = 1, 4 do
+                                            local point = closestGen:FindFirstChild("GeneratorPoint" .. i)
+                                            if point then
+                                                scRemote:FireServer("success", 1, closestGen, point)
+                                            end
+                                        end
+                                    end
+                                end)
+                                -- ProgressUpdateEvent: percepat progress
+                                pcall(function()
+                                    local puRemote = ReplicatedStorage:FindFirstChild("Remotes")
+                                        and ReplicatedStorage.Remotes:FindFirstChild("Progress")
+                                        and ReplicatedStorage.Remotes.Progress:FindFirstChild("ProgressUpdateEvent")
+                                    if puRemote then
+                                        puRemote:FireServer()
+                                    end
+                                end)
+                                -- ProgressBindable: client-side trigger
+                                pcall(function()
+                                    local pbRemote = ReplicatedStorage:FindFirstChild("Remotes")
+                                        and ReplicatedStorage.Remotes:FindFirstChild("Progress")
+                                        and ReplicatedStorage.Remotes.Progress:FindFirstChild("ProgressBindable")
+                                    if pbRemote then
+                                        pbRemote:FireServer()
+                                    end
+                                end)
+                                -- Sembunyikan skill check GUI
+                                pcall(function()
+                                    local gui = LocalPlayer:FindFirstChild("PlayerGui")
+                                    if gui then
+                                        local scGui = gui:FindFirstChild("SkillCheckPromptGui")
+                                        if scGui and scGui:FindFirstChild("Check") then
+                                            scGui.Check.Visible = false
+                                        end
+                                    end
+                                end)
+                            end
+                        end
+                    end
+                    task.wait(0.1)
+                end
+            end)
+            WindUI:Notify({Title = "Fast Gen", Content = "Aktif! Speed " .. fastGenSpeed .. "x", Duration = 2, Icon = "zap"})
+        else
+            WindUI:Notify({Title = "Fast Gen", Content = "Dimatikan.", Duration = 2, Icon = "zap"})
+        end
+    end
+})
+
+SurTab:Slider({
+    Title = "Fast Gen Speed (1x-10x)",
+    Desc  = "Makin tinggi = makin cepat repair. 3x = kayak 3 orang repair bareng.",
+    Value = 3,
+    Min = 1,
+    Max = 10,
+    Step = 1,
+    Callback = function(v)
+        fastGenSpeed = v
+    end
+})
+
 local autoLeverEnabled = false
 
 SurTab:Toggle({
