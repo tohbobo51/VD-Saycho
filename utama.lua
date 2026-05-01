@@ -2921,28 +2921,34 @@ SurTab:Toggle({
     end
 })
 
+do -- FEATURE HEAL (isolated scope)
 SurTab:Section({ Title = "Feature Heal", Icon = "cross" })
 
--- ════ SELF HEAL / REVIVE ═══
--- Game VD mechanics:
---   HP < 50  = KNOCKED (bisa di-carry, di-hook killer)
---   HP 50-100 = ALIVE (normal, bisa jalan/tembak)
---
--- Server-side heal sequence (dari RemoteSpy):
---   REVIVE dari KNOCK:
---     1. Collision.EnableCollision:FireServer()
---     2. EmoteHandler("StopEmote")
---     3. Healing.Reset(Player)
---
---   HEAL partial damage:
---     1. ChangeAttribute("Crouchingserver", false)
---     2. EmoteHandler("StopEmote")
---     3. Healing.Reset(Player)
---
---   Kita kirim SEMUA remote supaya cover kedua skenario.
---   Client-side HP set hanya visual, server-side HP = Healing.Reset.
---   Penting: kirim remote dengan urutan benar + delay kecil supaya server proses.
+-- SELF HEAL / REVIVE
+-- Game VD: HP < 50 = KNOCKED, HP 50-100 = ALIVE
+-- Kita kirim SEMUA remote supaya cover kedua skenario.
 local autoSelfReviveEnabled = false
+
+-- Safe remote fire: gunakan FindFirstChild chain, tanpa varargs
+local function safeFire(path1, path2, path3, path4, arg1, arg2, arg3)
+    pcall(function()
+        local obj = ReplicatedStorage:FindFirstChild("Remotes")
+        if path1 then obj = obj and obj:FindFirstChild(path1) end
+        if path2 then obj = obj and obj:FindFirstChild(path2) end
+        if path3 then obj = obj and obj:FindFirstChild(path3) end
+        if path4 then obj = obj and obj:FindFirstChild(path4) end
+        if not obj then return end
+        if arg3 ~= nil then
+            obj:FireServer(arg1, arg2, arg3)
+        elseif arg2 ~= nil then
+            obj:FireServer(arg1, arg2)
+        elseif arg1 ~= nil then
+            obj:FireServer(arg1)
+        else
+            obj:FireServer()
+        end
+    end)
+end
 
 local function sendSelfHeal()
     local char = LocalPlayer.Character
@@ -2950,49 +2956,35 @@ local function sendSelfHeal()
     local hum = char:FindFirstChildOfClass("Humanoid")
     local root = char:FindFirstChild("HumanoidRootPart")
 
-    -- ═══ Step 1: Stop healing yang sedang berjalan (kalau ada) ═══
-    pcall(function() ReplicatedStorage.Remotes.Healing.Stophealing:FireServer() end)
-
-    -- ═══ Step 2: Re-enable collision (WAJIB saat revive dari knock) ═══
-    pcall(function() ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer() end)
-
-    -- ═══ Step 3: Hapus injured/crouching attribute ═══
-    pcall(function() ReplicatedStorage.Remotes.Mechanics.Status.ChangeAttribute:FireServer("Crouchingserver", false) end)
-    if root then
-        pcall(function() root:SetAttribute("Crouchingserver", false) end)
-    end
-
-    -- ═══ Step 4: Stop emote sekarat ═══
-    pcall(function() ReplicatedStorage.Remotes.EmoteHandler:FireServer("StopEmote") end)
-
-    -- ═══ Step 5: Fix knock state di client ═══
+    -- Stop healing yang sedang berjalan
+    safeFire("Healing", "Stophealing")
+    -- Re-enable collision (WAJIB saat revive dari knock)
+    safeFire("Collision", "EnableCollision")
+    -- Hapus injured/crouching attribute
+    safeFire("Mechanics", "Status", "ChangeAttribute", nil, "Crouchingserver", false)
+    if root then pcall(function() root:SetAttribute("Crouchingserver", false) end) end
+    -- Stop emote sekarat
+    safeFire("EmoteHandler", nil, nil, nil, "StopEmote")
+    -- Fix knock state di client
     if hum then
         pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
         pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, false) end)
         pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false) end)
         pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
     end
-
-    -- ═══ Step 6: Healing animations (proses heal terlihat) ═══
-    pcall(function() ReplicatedStorage.Remotes.Healing.HealAnim:FireServer() end)
-    pcall(function() ReplicatedStorage.Remotes.Healing.HealAnimRec:FireServer() end)
-
-    -- ═══ Step 7: Kirim SkillCheckResult (auto-pass skill check) ═══
-    pcall(function() ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, char) end)
-
-    -- ═══ Step 8: Reset HP server-side (INI YANG BIKIN HP PENUH DI SERVER) ═══
-    pcall(function() ReplicatedStorage.Remotes.Healing.Reset:FireServer(LocalPlayer) end)
-
-    -- ═══ Step 9: Hapus efek darah di screen ═══
-    pcall(function() ReplicatedStorage.Remotes.Healing.DisplayBlood:FireServer() end)
-
-    -- ═══ Step 10: Set HP client-side (visual) ═══
-    if hum then
-        pcall(function() hum.Health = hum.MaxHealth end)
-    end
+    -- Healing animations
+    safeFire("Healing", "HealAnim")
+    safeFire("Healing", "HealAnimRec")
+    -- Auto-pass skill check
+    safeFire("Healing", "SkillCheckResultEvent", nil, nil, "neutral", 0, char)
+    -- Reset HP server-side (YANG BIKIN HP PENUH DI SERVER)
+    safeFire("Healing", "Reset", nil, nil, LocalPlayer)
+    -- Hapus efek darah
+    safeFire("Healing", "DisplayBlood")
+    -- Set HP client-side
+    if hum then pcall(function() hum.Health = hum.MaxHealth end) end
 end
 
--- Cek apakah player dalam state KNOCK
 local function isKnocked()
     local char = LocalPlayer.Character
     if not char then return false end
@@ -3024,7 +3016,6 @@ SurTab:Toggle({
                     if isKnocked() then
                         sendSelfHeal()
                         task.wait(0.3)
-                        -- Burst ke-2 kalau masih knocked
                         if isKnocked() then sendSelfHeal() end
                     end
                     task.wait(0.5)
@@ -3039,19 +3030,19 @@ SurTab:Toggle({
 
 SurTab:Button({
     Title = "Instant Full Heal (Self)",
-    Desc  = "Heal lengkap: StopHealing + Collision + ChangeAttribute + Anim + SkillCheck + Reset + HP",
+    Desc  = "Heal lengkap 3x burst: StopHealing + Collision + ChangeAttribute + Anim + SkillCheck + Reset + HP",
     Callback = function()
         if not LocalPlayer.Character then
             WindUI:Notify({Title = "Error", Content = "Karakter tidak ditemukan!", Duration = 2, Icon = "alert-circle"})
             return
         end
         sendSelfHeal()
-        -- Burst ke-2 dan ke-3 dengan delay
         task.delay(0.3, function() sendSelfHeal() end)
         task.delay(0.6, function() sendSelfHeal() end)
         WindUI:Notify({Title = "Heal", Content = "3x Full Heal dikirim! HP harus penuh di server.", Duration = 2, Icon = "heart"})
     end
 })
+end -- FEATURE HEAL
 
 SurTab:Section({ Title = "Feature Cheat", Icon = "bug" })
 
@@ -3272,6 +3263,7 @@ SurTab:Button({
 -- ============================================================
 -- SURVIVOR REMOTES  — Fast Vault toggle, Stop Emote, Heal
 -- ============================================================
+do -- VAULT (isolated scope)
 SurTab:Section({ Title = "Vault / Window", Icon = "wind" })
 
 -- ─── Vault state & remotes ───────────────────────────────────
@@ -3316,23 +3308,30 @@ end
 -- Fast vault: kirim semua remote dengan urutan yang benar
 local function doFastVault(trigger)
     if not trigger then return end
-    -- Sequence yang benar dari RemoteSpy:
-    -- 1. VaultEvent(trigger, true) = mulai vault
-    -- 2. fastvault(Player) = skip animasi, langsung selesai
-    -- 3. VaultCompleteEvent(trigger, false) = selesai vault
-    -- 4. VaultAnim = animasi vault (optional)
-    -- 5. Vaultbindable = client-side vault trigger
-    pcall(function() ReplicatedStorage.Remotes.Window.VaultEvent:FireServer(trigger, true) end)
-    pcall(function() ReplicatedStorage.Remotes.Window.fastvault:FireServer(LocalPlayer) end)
-    pcall(function() ReplicatedStorage.Remotes.Window.VaultAnim:FireServer() end)
-    pcall(function() ReplicatedStorage.Remotes.Window.VaultCompleteEvent:FireServer(trigger, false) end)
-    pcall(function() ReplicatedStorage.Remotes.Window.VaultCompleteEvent:FireServer(trigger, true) end)
     pcall(function()
-        local vb = ReplicatedStorage.Remotes.Window:FindFirstChild("Vaultbindable")
+        local winRem = ReplicatedStorage:FindFirstChild("Remotes")
+        if winRem then winRem = winRem:FindFirstChild("Window") end
+        if not winRem then return end
+        -- VaultEvent(trigger, true) = mulai vault
+        local ve = winRem:FindFirstChild("VaultEvent")
+        if ve then ve:FireServer(trigger, true) end
+        -- fastvault(Player) = skip animasi
+        local fv = winRem:FindFirstChild("fastvault")
+        if fv then fv:FireServer(LocalPlayer) end
+        -- VaultAnim
+        local va = winRem:FindFirstChild("VaultAnim")
+        if va then va:FireServer() end
+        -- VaultCompleteEvent(trigger, false) = selesai
+        local vc = winRem:FindFirstChild("VaultCompleteEvent")
+        if vc then
+            vc:FireServer(trigger, false)
+            vc:FireServer(trigger, true)
+        end
+        -- Vaultbindable
+        local vb = winRem:FindFirstChild("Vaultbindable")
         if vb then vb:FireServer() end
-    end)
-    pcall(function()
-        local vp1 = ReplicatedStorage.Remotes.Window:FindFirstChild("VaultComplete Eventpart1")
+        -- VaultComplete Eventpart1
+        local vp1 = winRem:FindFirstChild("VaultComplete Eventpart1")
         if vp1 then vp1:FireServer() end
     end)
 end
@@ -3410,6 +3409,7 @@ SurTab:Button({
         end
     end
 })
+end -- VAULT
 
 -- ─── Stop Emote ───────────────────────────────────────────────
 SurTab:Section({ Title = "Emote", Icon = "smile" })
@@ -3434,6 +3434,7 @@ SurTab:Button({
 -- ============================================================
 -- HEAL & REVIVE PLAYER LAIN
 -- ============================================================
+do -- HEAL & REVIVE OTHER (isolated scope)
 -- HealEvent(HRP, false) = HEAL orang LAIN (sembuhkan luka, HP naik)
 -- HealEvent(HRP, true)  = REVIVE orang LAIN (bangunkan dari knocked)
 -- ⚠️ TIDAK BISA untuk diri sendiri — server reject kalau HRP milik sendiri
@@ -3477,10 +3478,19 @@ local function healOtherPlayer(targetPl)
     if not targetPl or not targetPl.Character then return false end
     local tr = targetPl.Character:FindFirstChild("HumanoidRootPart")
     if not tr then return false end
-    pcall(function() ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(tr, false) end)
-    pcall(function() ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, targetPl.Character) end)
-    pcall(function() ReplicatedStorage.Remotes.Healing.HealAnim:FireServer() end)
-    pcall(function() ReplicatedStorage.Remotes.Healing.HealAnimRec:FireServer() end)
+    pcall(function()
+        local rem = ReplicatedStorage:FindFirstChild("Remotes")
+        if rem then rem = rem:FindFirstChild("Healing") end
+        if not rem then return end
+        local he = rem:FindFirstChild("HealEvent")
+        if he then he:FireServer(tr, false) end
+        local sc = rem:FindFirstChild("SkillCheckResultEvent")
+        if sc then sc:FireServer("neutral", 0, targetPl.Character) end
+        local ha = rem:FindFirstChild("HealAnim")
+        if ha then ha:FireServer() end
+        local hr = rem:FindFirstChild("HealAnimRec")
+        if hr then hr:FireServer() end
+    end)
     return true
 end
 
@@ -3489,11 +3499,29 @@ local function reviveOtherPlayer(targetPl)
     if not targetPl or not targetPl.Character then return false end
     local tr = targetPl.Character:FindFirstChild("HumanoidRootPart")
     if not tr then return false end
-    pcall(function() ReplicatedStorage.Remotes.Healing.HealEvent:FireServer(tr, true) end)
-    pcall(function() ReplicatedStorage.Remotes.Healing.SkillCheckResultEvent:FireServer("neutral", 0, targetPl.Character) end)
-    pcall(function() ReplicatedStorage.Remotes.Healing.HealAnim:FireServer() end)
-    pcall(function() ReplicatedStorage.Remotes.Healing.HealAnimRec:FireServer() end)
-    pcall(function() ReplicatedStorage.Remotes.Collision.EnableCollision:FireServer() end)
+    pcall(function()
+        local rem = ReplicatedStorage:FindFirstChild("Remotes")
+        if rem then rem = rem:FindFirstChild("Healing") end
+        if not rem then return end
+        local he = rem:FindFirstChild("HealEvent")
+        if he then he:FireServer(tr, true) end
+        local sc = rem:FindFirstChild("SkillCheckResultEvent")
+        if sc then sc:FireServer("neutral", 0, targetPl.Character) end
+        local ha = rem:FindFirstChild("HealAnim")
+        if ha then ha:FireServer() end
+        local hr = rem:FindFirstChild("HealAnimRec")
+        if hr then hr:FireServer() end
+    end)
+    pcall(function()
+        local rem = ReplicatedStorage:FindFirstChild("Remotes")
+        if rem then
+            local col = rem:FindFirstChild("Collision")
+            if col then
+                local ec = col:FindFirstChild("EnableCollision")
+                if ec then ec:FireServer() end
+            end
+        end
+    end)
     return true
 end
 
@@ -3588,6 +3616,7 @@ SurTab:Button({
         end)
     end
 })
+end -- HEAL & REVIVE OTHER
 
 -- ====================== KILLER ======================
 killerTab:Section({ Title = "Feature Killer", Icon = "swords" })
