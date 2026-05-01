@@ -3491,79 +3491,77 @@ local function findPlayerFromDropdown(dropdownName)
     return nil
 end
 
--- helper: heal 1x ke player lain (HealEvent HRP, false = heal biasa)
-local function healOtherPlayer(targetPl)
+-- helper: heal+revive 1x ke player lain (kirim SEMUA remote heal sekaligus)
+local function healReviveOther(targetPl)
     if not targetPl or not targetPl.Character then return false end
     local tr = targetPl.Character:FindFirstChild("HumanoidRootPart")
     if not tr then return false end
     pcall(function()
         local rem = ReplicatedStorage:FindFirstChild("Remotes")
-        if rem then rem = rem:FindFirstChild("Healing") end
         if not rem then return end
-        local he = rem:FindFirstChild("HealEvent")
+        local healing = rem:FindFirstChild("Healing")
+        if not healing then return end
+
+        -- 1. Stop healing yang sedang berjalan (bersihkan state)
+        local sh = healing:FindFirstChild("Stophealing")
+        if sh then sh:FireServer() end
+
+        -- 2. Heal biasa (HP naik)
+        local he = healing:FindFirstChild("HealEvent")
         if he then he:FireServer(tr, false) end
-        local sc = rem:FindFirstChild("SkillCheckResultEvent")
-        if sc then sc:FireServer("neutral", 0, targetPl.Character) end
-        local ha = rem:FindFirstChild("HealAnim")
-        if ha then ha:FireServer() end
-        local hr = rem:FindFirstChild("HealAnimRec")
-        if hr then hr:FireServer() end
-    end)
-    return true
-end
 
--- helper: revive 1x ke player lain (HealEvent HRP, true = revive dari knock)
-local function reviveOtherPlayer(targetPl)
-    if not targetPl or not targetPl.Character then return false end
-    local tr = targetPl.Character:FindFirstChild("HumanoidRootPart")
-    if not tr then return false end
-    pcall(function()
-        local rem = ReplicatedStorage:FindFirstChild("Remotes")
-        if rem then rem = rem:FindFirstChild("Healing") end
-        if not rem then return end
-        local he = rem:FindFirstChild("HealEvent")
+        -- 3. Revive dari knocked
         if he then he:FireServer(tr, true) end
-        local sc = rem:FindFirstChild("SkillCheckResultEvent")
+
+        -- 4. Auto-pass skill check
+        local sc = healing:FindFirstChild("SkillCheckResultEvent")
         if sc then sc:FireServer("neutral", 0, targetPl.Character) end
-        local ha = rem:FindFirstChild("HealAnim")
+
+        -- 5. Healing animations
+        local ha = healing:FindFirstChild("HealAnim")
         if ha then ha:FireServer() end
-        local hr = rem:FindFirstChild("HealAnimRec")
+        local hr = healing:FindFirstChild("HealAnimRec")
         if hr then hr:FireServer() end
-    end)
-    pcall(function()
-        local rem = ReplicatedStorage:FindFirstChild("Remotes")
-        if rem then
-            local col = rem:FindFirstChild("Collision")
-            if col then
-                local ec = col:FindFirstChild("EnableCollision")
-                if ec then ec:FireServer() end
-            end
+
+        -- 6. Reset target HP di server
+        local reset = healing:FindFirstChild("Reset")
+        if reset then reset:FireServer(targetPl) end
+
+        -- 7. Re-enable collision (kalau target knocked)
+        local col = rem:FindFirstChild("Collision")
+        if col then
+            local ec = col:FindFirstChild("EnableCollision")
+            if ec then ec:FireServer() end
         end
+
+        -- 8. Hapus blood effect
+        local db = healing:FindFirstChild("DisplayBlood")
+        if db then db:FireServer() end
     end)
     return true
 end
 
--- ─── HEAL PLAYER LAIN (biasa, HP naik) ───
+-- ─── HEAL/REVIVE PLAYER LAIN (cukup 2 tombol) ───
 SurTab:Button({
-    Title = "Heal Player (1x)",
-    Desc  = "Heal biasa ke player yang dipilih. HealEvent(HRP, false).",
+    Title = "Heal/Revive Player (1x)",
+    Desc  = "Heal + Revive player yang dipilih. HealEvent(HRP,false) + HealEvent(HRP,true) + Reset + Collision.",
     Callback = function()
         local target = findPlayerFromDropdown(selectedHealPlayer)
         if not target then
             WindUI:Notify({Title = "Heal", Content = "Pilih player dulu dari dropdown!", Duration = 2, Icon = "alert-circle"})
             return
         end
-        if healOtherPlayer(target) then
-            WindUI:Notify({Title = "Heal", Content = "Heal dikirim ke " .. target.Name .. "!", Duration = 2, Icon = "heart"})
+        if healReviveOther(target) then
+            WindUI:Notify({Title = "Heal", Content = "Heal+Revive dikirim ke " .. target.Name .. "!", Duration = 2, Icon = "heart"})
         else
-            WindUI:Notify({Title = "Heal", Content = "Gagal heal " .. target.Name .. ". Karakter tidak ditemukan.", Duration = 2, Icon = "alert-circle"})
+            WindUI:Notify({Title = "Heal", Content = "Gagal! Karakter " .. target.Name .. " tidak ditemukan.", Duration = 2, Icon = "alert-circle"})
         end
     end
 })
 
 SurTab:Button({
-    Title = "Heal Player (30x)",
-    Desc  = "Spam heal 30x ke player yang dipilih. Untuk damage yang bandel!",
+    Title = "Heal/Revive Player (30x)",
+    Desc  = "Spam heal+revive 30x ke player yang dipilih. Untuk knock/damage yang bandel!",
     Callback = function()
         local target = findPlayerFromDropdown(selectedHealPlayer)
         if not target then
@@ -3573,52 +3571,12 @@ SurTab:Button({
         task.spawn(function()
             local success = 0
             for i = 1, 30 do
-                if healOtherPlayer(target) then
+                if healReviveOther(target) then
                     success = success + 1
                 end
                 if i < 30 then task.wait(0.05) end
             end
-            WindUI:Notify({Title = "Heal 30x", Content = success .. "x heal dikirim ke " .. target.Name .. "!", Duration = 2, Icon = "heart"})
-        end)
-    end
-})
-
--- ─── REVIVE PLAYER LAIN (dari knocked) ───
-SurTab:Button({
-    Title = "Revive Player (1x)",
-    Desc  = "Revive dari knocked ke player yang dipilih. HealEvent(HRP, true).",
-    Callback = function()
-        local target = findPlayerFromDropdown(selectedHealPlayer)
-        if not target then
-            WindUI:Notify({Title = "Revive", Content = "Pilih player dulu dari dropdown!", Duration = 2, Icon = "alert-circle"})
-            return
-        end
-        if reviveOtherPlayer(target) then
-            WindUI:Notify({Title = "Revive", Content = "Revive dikirim ke " .. target.Name .. "!", Duration = 2, Icon = "heart"})
-        else
-            WindUI:Notify({Title = "Revive", Content = "Gagal revive " .. target.Name .. ". Karakter tidak ditemukan.", Duration = 2, Icon = "alert-circle"})
-        end
-    end
-})
-
-SurTab:Button({
-    Title = "Revive Player (30x)",
-    Desc  = "Spam revive 30x ke player yang dipilih. Untuk knock yang bandel!",
-    Callback = function()
-        local target = findPlayerFromDropdown(selectedHealPlayer)
-        if not target then
-            WindUI:Notify({Title = "Revive", Content = "Pilih player dulu dari dropdown!", Duration = 2, Icon = "alert-circle"})
-            return
-        end
-        task.spawn(function()
-            local success = 0
-            for i = 1, 30 do
-                if reviveOtherPlayer(target) then
-                    success = success + 1
-                end
-                if i < 30 then task.wait(0.05) end
-            end
-            WindUI:Notify({Title = "Revive 30x", Content = success .. "x revive dikirim ke " .. target.Name .. "!", Duration = 2, Icon = "heart"})
+            WindUI:Notify({Title = "Heal 30x", Content = success .. "x heal+revive dikirim ke " .. target.Name .. "!", Duration = 2, Icon = "heart"})
         end)
     end
 })
