@@ -2560,8 +2560,6 @@ EspTab:Colorpicker({
 
 
 -- ====================== BYPASS GATE ======================
-local bypassGateEnabled = false
-
 -- ฟังก์ชันรวบรวมเกตทั้งหมด
 local function gatherGates()
     local gates = {}
@@ -2641,7 +2639,6 @@ MainTab:Toggle({
     Title = "Bypass Gate (Fixed)",
     Value = false,
     Callback = function(state)
-        bypassGateEnabled = state
         setGateState(state)
     end
 })
@@ -3185,30 +3182,9 @@ end -- FEATURE HEAL
 
 SurTab:Section({ Title = "Feature Cheat", Icon = "bug" })
 
-local NoFallEnabled = false
-
-SurTab:Toggle({
-    Title = "No Fall (Beta)",
-    Value = false,
-    Callback = function(v)
-        NoFallEnabled = v
-
-        if NoFallEnabled then
-            task.spawn(function()
-                local ReplicatedStorage = game:GetService("ReplicatedStorage")
-                local FallRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Mechanics"):WaitForChild("Status"):WaitForChild("Fall")
-
-                while NoFallEnabled do
-                    local args = { -100 }
-                    pcall(function()
-                        FallRemote:FireServer(unpack(args))
-                    end)
-                    task.wait(1)
-                end
-            end)
-        end
-    end
-})
+-- No Fall (Beta) DIHAPUS: toggle ini mengirim FallRemote:FireServer(-100) yang justru
+-- MENYEBABKAN fall damage, bukan mencegahnya. Gunakan toggle "No Fall Damage" di atas
+-- yang sudah benar menggunakan metamethod hook untuk memblokir FireServer.
 
 SurTab:Button({ 
     Title = "Fling Killer (Spam if killer doesn't fling)",  
@@ -3851,7 +3827,7 @@ killerTab:Toggle({
     end
 })
 
-killerTab:Toggle({Title="Anti Parry (Soon)", Value=false, Callback=function(v) end})
+-- Anti Parry: belum diimplementasi, dihapus dari UI
 
 killerTab:Section({ Title = "Feature No-Cooldown", Icon = "crown" })
 
@@ -4105,8 +4081,6 @@ PlayerTab:Toggle({ Title = "Enable Speed", Value=false, Callback=function(v)
         if speedConnection then speedConnection:Disconnect() speedConnection=nil end
     end
 end })
-
-PlayerTab:Section({ Title = "Feature Power", Icon = "flame" })
 
 -- Teleport to Player
 PlayerTab:Section({ Title = "Teleport to Player", Icon = "map-pin" })
@@ -4429,45 +4403,62 @@ SilentTab:Slider({
     Callback = function(v) Config.SilentAim.Range = v end
 })
 
-Info = InfoTab
-
 -- ============================================================
 -- INFORMATION TAB CONTENT
 -- ============================================================
+local InfoTabSetupOk = false
 pcall(function()
-    Info:Paragraph({
-        Title = "Holic",
-        Desc = "Dibuat oleh Saycho\nPada tanggal 01 Mei 2026\n\nScript khusus untuk Violence District\nFast Vault, ESP, Aimbot, Heal, dan lainnya.",
-        Image = "rbxassetid://99240933011775",
-        ImageSize = 40,
-        Thumbnail = "",
-        ThumbnailSize = 0,
-        Locked = false,
-        Buttons = {}
-    })
+    if InfoTab and InfoTab.Paragraph then
+        InfoTab:Paragraph({
+            Title = "Holic",
+            Desc = "Dibuat oleh Saycho\nPada tanggal 01 Mei 2026\n\nScript khusus untuk Violence District\nFast Vault, ESP, Aimbot, Heal, dan lainnya.",
+            Image = "rbxassetid://99240933011775",
+            ImageSize = 40,
+            Thumbnail = "",
+            ThumbnailSize = 0,
+            Locked = false,
+            Buttons = {}
+        })
 
-    Info:Divider()
+        InfoTab:Divider()
 
-    Info:Paragraph({
-        Title = "Discord",
-        Desc = "Join server Discord untuk update, info, dan chat!",
-        Image = "rbxassetid://99240933011775",
-        ImageSize = 30,
-        Thumbnail = "",
-        ThumbnailSize = 0,
-        Locked = false,
-        Buttons = {
-            {
-                Icon = "copy",
-                Title = "Copy Link",
-                Callback = function()
-                    setclipboard("https://discord.gg/9yAtRgpsua")
-                    print("Copied discord link to clipboard!")
-                end,
+        InfoTab:Paragraph({
+            Title = "Discord",
+            Desc = "Join server Discord untuk update, info, dan chat!",
+            Image = "rbxassetid://99240933011775",
+            ImageSize = 30,
+            Thumbnail = "",
+            ThumbnailSize = 0,
+            Locked = false,
+            Buttons = {
+                {
+                    Icon = "copy",
+                    Title = "Copy Link",
+                    Callback = function()
+                        pcall(function() setclipboard("https://discord.gg/9yAtRgpsua") end)
+                        print("Copied discord link to clipboard!")
+                    end,
+                }
             }
-        }
-    })
+        })
+        InfoTabSetupOk = true
+    end
 end)
+
+if not InfoTabSetupOk then
+    -- Fallback: gunakan Section + Button kalau Paragraph tidak tersedia di versi WindUI ini
+    pcall(function()
+        InfoTab:Section({ Title = "Holic - VD Script", Icon = "info" })
+        InfoTab:Button({
+            Title = "Copy Discord Link",
+            Desc = "Join server Discord untuk update dan info!",
+            Callback = function()
+                pcall(function() setclipboard("https://discord.gg/9yAtRgpsua") end)
+                WindUI:Notify({ Title = "Discord", Content = "Link Discord sudah dicopy!", Duration = 2, Icon = "copy" })
+            end
+        })
+    end)
+end
 
 -- ============================================================
 -- QUICK PANEL  — 3 tombol floating TERPISAH, masing-masing
@@ -4602,8 +4593,12 @@ MainTab:Toggle({
                 Color3.fromRGB(20,50,20), Color3.fromRGB(80,200,80),
                 UDim2.new(0, 12, 0.50, 0),
                 function(on)
-                    Config.Aimbot.Enabled = on
-                    if on then startAimbot() else stopAimbot() end
+                    VD.AIM_Enabled = on
+                    if on then
+                        if VD.AIM_ShowFOV then drawFOVCircle(VD.AIM_FOV) end
+                    else
+                        drawFOVCircle(0)
+                    end
                 end
             )
         else
