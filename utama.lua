@@ -40,10 +40,9 @@ local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 pcall(function() loadstring(game:HttpGet("https://pastefy.app/Wd15jL6J/raw", true))() end)
 -- ====================== WINDOW ======================
-local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 
-local player = Players.LocalPlayer
+-- Reuse existing Players, LocalPlayer from above
 
 WindUI:AddTheme({
     Name = "Light",
@@ -1068,30 +1067,7 @@ local function UpdateSpearAim()
     end
 end
 
--- FOV Circle
-local fovCircle = nil
-local fovCircleConn = nil
-local function drawFOVCircle(radius)
-    if fovCircleConn then fovCircleConn:Disconnect(); fovCircleConn = nil end
-    if fovCircle then pcall(function() fovCircle:Remove() end); fovCircle = nil end
-    if not radius or radius <= 0 or not DrawingAvailable then return end
-    pcall(function()
-        fovCircle           = Drawing.new("Circle")
-        fovCircle.Radius    = radius
-        fovCircle.Color     = Color3.fromRGB(255, 200, 50)
-        fovCircle.Thickness = 1.5
-        fovCircle.Filled    = false
-        fovCircle.NumSides  = 64
-        local vp = workspace.CurrentCamera.ViewportSize
-        fovCircle.Position  = Vector2.new(vp.X/2, vp.Y/2)
-        fovCircle.Visible   = true
-        fovCircleConn = game:GetService("RunService").RenderStepped:Connect(function()
-            if not fovCircle then return end
-            local vp2 = workspace.CurrentCamera.ViewportSize
-            pcall(function() fovCircle.Position = Vector2.new(vp2.X/2, vp2.Y/2) end)
-        end)
-    end)
-end
+-- FOV Circle (removed duplicate — see drawFOVCircle at Aimbot section below)
 
 -- RMB input for aimbot
 UserInputService.InputBegan:Connect(function(input, gpe)
@@ -1328,38 +1304,8 @@ local ShowDistance = true
 local ShowHP = true
 local ShowHighlight = true
 
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-local RunService = game:GetService("RunService")
+-- Reuse existing Players, LocalPlayer, RunService from above
 local espObjects = {}
-
--- ============================================================
--- CONFIG TABLE
--- ============================================================
-local Config = {
-    ESP = {
-        ShowDistance        = true,
-        MaxDistance         = 500,
-        ShowOnlyClosestHook = false,
-    },
-    AutoFeatures = {
-        AutoAttack  = false,
-        AttackRange = 10,
-    },
-    Teleportation = {
-        SafeTeleport   = true,
-        TeleportOffset = 3,
-    },
-    Performance = {
-        UpdateRate           = 0.5,
-        UseDistanceCulling   = true,
-        MaxESPObjects        = 100,
-        DisableParticles     = false,
-        LowerGraphics        = false,
-        DisableShadows       = false,
-        ReduceRenderDistance = false,
-    },
-}
 
 -- ============================================================
 -- CONFIG TABLE v1.2 — central settings, dipakai semua fitur
@@ -2124,7 +2070,7 @@ local function updateESP(dt)
                     if mdl then removeESP(mdl) end
                 end
 
-            elseif obj.Name == "Palletwrong" then
+            elseif obj.Name == "Pallet" then
                 if espPallet then
                     createESP(obj, COLOR_PALLET)
                 else
@@ -2456,21 +2402,21 @@ EspTab:Toggle({
 
 EspTab:Toggle({
     Title = "Use Distance Culling",
-    Description = "Sembunyikan ESP di luar MaxDistance",
+    Desc = "Sembunyikan ESP di luar MaxDistance",
     Value = Config.Performance.UseDistanceCulling,
     Callback = function(v) Config.Performance.UseDistanceCulling = v end
 })
 
 EspTab:Toggle({
     Title = "Show Only Closest Hook",
-    Description = "Tampilkan 1 hook terdekat saja (kuning)",
+    Desc = "Tampilkan 1 hook terdekat saja (kuning)",
     Value = Config.ESP.ShowOnlyClosestHook,
     Callback = function(v) Config.ESP.ShowOnlyClosestHook = v end
 })
 
 EspTab:Slider({
     Title = "Max Distance",
-    Description = "Jarak max ESP muncul (studs)",
+    Desc = "Jarak max ESP muncul (studs)",
     Value = { Min=50, Max=1000, Default=500 },
     Step = 50,
     Callback = function(v) Config.ESP.MaxDistance = v end
@@ -2478,7 +2424,7 @@ EspTab:Slider({
 
 EspTab:Slider({
     Title = "Update Rate (detik x10)",
-    Description = "Makin kecil = makin smooth tapi berat",
+    Desc = "Makin kecil = makin smooth tapi berat",
     Value = { Min=1, Max=20, Default=5 },
     Step = 1,
     Callback = function(v) Config.Performance.UpdateRate = v / 10 end
@@ -2486,7 +2432,7 @@ EspTab:Slider({
 
 EspTab:Slider({
     Title = "Max ESP Objects",
-    Description = "Batas objek yang di-render (hemat FPS)",
+    Desc = "Batas objek yang di-render (hemat FPS)",
     Value = { Min=10, Max=200, Default=100 },
     Step = 10,
     Callback = function(v) Config.Performance.MaxESPObjects = v end
@@ -2706,7 +2652,7 @@ SurTab:Section({ Title = "Feature Survivor", Icon = "user" })
 -- ── Auto Parry (v2.0 — fires actual Parrying Dagger remote with angle+raycast check) ──
 SurTab:Toggle({
     Title       = "Auto Parry",
-    Description = "Deteksi killer dalam jangkauan + cek sudut → fire parry remote otomatis",
+    Desc = "Deteksi killer dalam jangkauan + cek sudut → fire parry remote otomatis",
     Value       = false,
     Callback    = function(v) VD.AUTO_Parry = v end
 })
@@ -2741,7 +2687,7 @@ SurTab:Toggle({
 })
 SurTab:Toggle({
     Title       = "Flee Killer (Auto TP Menjauh)",
-    Description = "TP ke tempat terjauh dari killer saat dia terlalu dekat",
+    Desc = "TP ke tempat terjauh dari killer saat dia terlalu dekat",
     Value       = false,
     Callback    = function(v) VD.AUTO_TeleAway = v end
 })
@@ -2754,7 +2700,7 @@ SurTab:Slider({
 SurTab:Section({ Title = "Beat Game (Survivor)", Icon = "trophy" })
 SurTab:Toggle({
     Title       = "Beat Survivor (Auto Escape)",
-    Description = "TP ke exit gate dan fire ESCAPED event",
+    Desc = "TP ke exit gate dan fire ESCAPED event",
     Value       = false,
     Callback    = function(v) VD.BEAT_Survivor = v end
 })
@@ -2975,9 +2921,7 @@ SurTab:Toggle({
 SurTab:Slider({
     Title = "Fast Gen Speed (1x-10x)",
     Desc  = "Makin tinggi = makin cepat repair. 3x = kayak 3 orang repair bareng.",
-    Value = 3,
-    Min = 1,
-    Max = 10,
+    Value = { Min = 1, Max = 10, Default = 3 },
     Step = 1,
     Callback = function(v)
         fastGenSpeed = v
@@ -3252,7 +3196,7 @@ SurTab:Toggle({
         if NoFallEnabled then
             task.spawn(function()
                 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-                local FallRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Mechanics"):WaitForChild("Fall")
+                local FallRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Mechanics"):WaitForChild("Status"):WaitForChild("Fall")
 
                 while NoFallEnabled do
                     local args = { -100 }
@@ -3376,6 +3320,7 @@ SurTab:Button({
                     until BasePart.Velocity.Magnitude > 500 or BasePart.Parent ~= TargetPlayer.Character or TargetPlayer.Parent ~= Players or THumanoid.Sit or Humanoid.Health <= 0 or tick() > Time + TimeToWait
                 end
 
+                getgenv().FPDH = workspace.FallenPartsDestroyHeight
                 workspace.FallenPartsDestroyHeight = 0/0
 
                 local BV = Instance.new("BodyVelocity")
@@ -3578,7 +3523,7 @@ end
 
 SurTab:Toggle({
     Title       = "Fast Vault",
-    Description = "Saat lewat jendela, otomatis vault cepat tanpa animasi",
+    Desc = "Saat lewat jendela, otomatis vault cepat tanpa animasi",
     Value       = false,
     Callback    = function(v)
         fastVaultEnabled = v
@@ -3906,7 +3851,7 @@ killerTab:Toggle({
     end
 })
 
-killerTab:Toggle({Title="Anti Parry (Soon)", Value=false, Callback=function(v) noFlashlightEnabled=v end})
+killerTab:Toggle({Title="Anti Parry (Soon)", Value=false, Callback=function(v) end})
 
 killerTab:Section({ Title = "Feature No-Cooldown", Icon = "crown" })
 
@@ -3914,7 +3859,7 @@ local nocooldownskillEnabled = false
 
 killerTab:Slider({
     Title = "Attack Range (studs)",
-    Description = "Radius auto attack dari Config",
+    Desc = "Radius auto attack dari Config",
     Value = { Min=3, Max=50, Default=10 },
     Step = 1,
     Callback = function(v)
@@ -3967,10 +3912,10 @@ killerTab:Toggle({
 
 killerTab:Section({ Title = "Feature Cheat", Icon = "bug" })
 
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-
+-- Reuse existing Players, LocalPlayer from above
 local noFlashlightEnabled = false
+local fullBrightEnabled = false
+local noFogEnabled = false
 
 -- Toggle ของคุณ (ถ้ามี)
 killerTab:Toggle({
@@ -4004,25 +3949,24 @@ task.spawn(function()
     end
 end)
 
-local Players = game:GetService("Players")
-local player = Players.LocalPlayer
+-- Reuse existing Players, LocalPlayer from above
 local camera = workspace.CurrentCamera
 
--- ปุ่มใน Killer Tab สำหรับ Reset กล้อง
+-- Button in Killer Tab for Camera Reset
 killerTab:Button({ 
     Title = "Fix Cam (3rd Person Camera)", 
     Callback = function()
-        -- รีเซ็ตกล้อง
-        local character = player.Character or player.CharacterAdded:Wait()
+        -- Reset camera
+        local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
         local humanoid = character:FindFirstChildOfClass("Humanoid")
 
         if humanoid then
             camera.CameraType = Enum.CameraType.Custom
             camera.CameraSubject = humanoid
 
-            player.CameraMinZoomDistance = 0.5
-            player.CameraMaxZoomDistance = 400
-            player.CameraMode = Enum.CameraMode.Classic
+            LocalPlayer.CameraMinZoomDistance = 0.5
+            LocalPlayer.CameraMaxZoomDistance = 400
+            LocalPlayer.CameraMode = Enum.CameraMode.Classic
 
             -- เผื่อโดน Anchor หัวไว้
             local head = character:FindFirstChild("Head")
@@ -4046,7 +3990,7 @@ MainTab:Toggle({
 
 MainTab:Toggle({
     Title = "Disable Particles",
-    Description = "Matikan efek partikel (FPS naik)",
+    Desc = "Matikan efek partikel (FPS naik)",
     Value = false,
     Callback = function(v)
         Config.Performance.DisableParticles = v
@@ -4056,7 +4000,7 @@ MainTab:Toggle({
 
 MainTab:Toggle({
     Title = "Lower Graphics",
-    Description = "Set kualitas grafik ke Level01",
+    Desc = "Set kualitas grafik ke Level01",
     Value = false,
     Callback = function(v)
         Config.Performance.LowerGraphics = v
@@ -4066,7 +4010,7 @@ MainTab:Toggle({
 
 MainTab:Toggle({
     Title = "Disable Shadows",
-    Description = "Matikan bayangan global",
+    Desc = "Matikan bayangan global",
     Value = false,
     Callback = function(v)
         Config.Performance.DisableShadows = v
@@ -4076,7 +4020,7 @@ MainTab:Toggle({
 
 MainTab:Toggle({
     Title = "Reduce Render Distance",
-    Description = "Aktifkan StreamingEnabled (hemat memori)",
+    Desc = "Aktifkan StreamingEnabled (hemat memori)",
     Value = false,
     Callback = function(v)
         Config.Performance.ReduceRenderDistance = v
@@ -4248,7 +4192,7 @@ PlayerTab:Toggle({
 PlayerTab:Section({ Title = "Moonwalk (v17)", Icon = "footprints" })
 PlayerTab:Toggle({
     Title       = "Moonwalk  (badan ikut kamera)",
-    Description = "Gerakkan kamera untuk kontrol arah saat moonwalk",
+    Desc = "Gerakkan kamera untuk kontrol arah saat moonwalk",
     Value       = false,
     Callback    = function(v)
         if v then startMoonwalk() else stopMoonwalk() end
@@ -4283,7 +4227,7 @@ AimTab:Section({ Title = "Camera Aimbot", Icon = "crosshair" })
 
 AimTab:Toggle({
     Title       = "Enable Aimbot",
-    Description = "Kamera Lerp ke target dalam FOV — target: Killer terdekat di layar",
+    Desc = "Kamera Lerp ke target dalam FOV — target: Killer terdekat di layar",
     Value       = false,
     Callback    = function(v)
         VD.AIM_Enabled = v
@@ -4332,7 +4276,7 @@ AimTab:Slider({
 AimTab:Section({ Title = "Spear Aimbot (Veil Killer)", Icon = "arrow-up-right" })
 AimTab:Toggle({
     Title       = "Spear Aimbot",
-    Description = "Auto-aim kamera dengan kompensasi gravitasi untuk spear Veil",
+    Desc = "Auto-aim kamera dengan kompensasi gravitasi untuk spear Veil",
     Value       = false,
     Callback    = function(v)
         VD.SPEAR_Aimbot = v
@@ -4345,7 +4289,7 @@ AimTab:Toggle({
 })
 AimTab:Toggle({
     Title       = "Show Spear FOV Circle",
-    Description = "Tampilkan lingkaran FOV untuk Spear Aimbot",
+    Desc = "Tampilkan lingkaran FOV untuk Spear Aimbot",
     Value       = true,
     Callback    = function(v)
         if v and VD.SPEAR_Aimbot then
@@ -4436,7 +4380,7 @@ SilentTab:Section({ Title = "Silent Aim (v18)", Icon = "ghost" })
 
 SilentTab:Toggle({
     Title       = "Enable Silent Aim",
-    Description = "Redirect tembakan ke target terdekat — kamera tidak bergerak",
+    Desc = "Redirect tembakan ke target terdekat — kamera tidak bergerak",
     Value       = false,
     Callback    = function(v)
         Config.SilentAim.Enabled = v
@@ -4454,7 +4398,7 @@ SilentTab:Toggle({
 
 SilentTab:Toggle({
     Title       = "Team Check  (skip sesama tim)",
-    Description = "Silent Aim tidak redirect ke teammate",
+    Desc = "Silent Aim tidak redirect ke teammate",
     Value       = true,
     Callback    = function(v) Config.SilentAim.TeamCheck = v end
 })
@@ -4631,7 +4575,7 @@ MainTab:Section({ Title = "Quick Panel", Icon = "zap" })
 
 MainTab:Toggle({
     Title       = "🌙  Tombol Moonwalk",
-    Description = "Tampilkan tombol floating Moonwalk di layar (bisa di-drag)",
+    Desc = "Tampilkan tombol floating Moonwalk di layar (bisa di-drag)",
     Value       = false,
     Callback    = function(v)
         if v then
@@ -4649,7 +4593,7 @@ MainTab:Toggle({
 
 MainTab:Toggle({
     Title       = "🎯  Tombol Aimbot",
-    Description = "Tampilkan tombol floating Aimbot di layar (bisa di-drag)",
+    Desc = "Tampilkan tombol floating Aimbot di layar (bisa di-drag)",
     Value       = false,
     Callback    = function(v)
         if v then
@@ -4670,7 +4614,7 @@ MainTab:Toggle({
 
 MainTab:Toggle({
     Title       = "🛡  Tombol GodMode",
-    Description = "Tampilkan tombol floating GodMode di layar (bisa di-drag)",
+    Desc = "Tampilkan tombol floating GodMode di layar (bisa di-drag)",
     Value       = false,
     Callback    = function(v)
         if v then
@@ -4852,7 +4796,7 @@ MainTab:Section({ Title = "Crosshair", Icon = "crosshair" })
 
 MainTab:Toggle({
     Title       = "Enable Crosshair",
-    Description = "Tampilkan crosshair kustom di tengah layar",
+    Desc = "Tampilkan crosshair kustom di tengah layar",
     Value       = false,
     Callback    = function(v)
         crosshairEnabled = v
